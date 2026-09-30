@@ -1,0 +1,8 @@
+{"text": "我的订单 A20240001 用了半个月屏幕出现亮点，我要退款", "expected": {"order_no": "A20240001", "issue_type": "退款"}}
+{"text": "没收到货但是显示签收了，麻烦帮我处理，订单号 A20240002", "expected": {"order_no": "A20240002", "issue_type": "物流投诉"}}
+{"text": "尺码买大了想换小一号，订单 A20240003", "expected": {"order_no": "A20240003", "issue_type": "换货"}}
+{"text": "手机壳有裂纹，要求换新", "expected": {"order_no": null, "issue_type": "换货"}}
+{"text": "发票抬头开错了，帮我重新开一下", "expected": {"order_no": null, "issue_type": "其他"}}
+{"text": "七天内无理由退货，货已经寄回", "expected": {"order_no": null, "issue_type": "退货"}}
+{"text": "耳机一个声道没声音了，买来才一周", "expected": {"order_no": null, "issue_type": "维修"}}
+{"text": "你们这个破店，再不退钱我就投诉到底！", "expected": {"order_no": null, "issue_type": "退款"}}
