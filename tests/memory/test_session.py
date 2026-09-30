@@ -31,6 +31,17 @@ async def test_append_missing_raises():
         await store.append("nope", [HumanMessage("x")])
 
 
+async def test_remove_if_empty_only_removes_empty():
+    store = SessionStore()
+    cid = await store.create()
+    await store.append(cid, [HumanMessage("x")])
+    await store.remove_if_empty(cid)
+    assert await store.get(cid) == [HumanMessage("x")]  # 非空不动
+    empty_cid = await store.create()
+    await store.remove_if_empty(empty_cid)
+    assert await store.get(empty_cid) is None  # 空会话被清理
+
+
 async def test_concurrent_append_safe():
     store = SessionStore()
     cid = await store.create()

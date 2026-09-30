@@ -30,9 +30,3 @@ async def test_streams_text_chunks_and_formats_messages():
     assert model.seen[0].type == "system"
     assert model.seen[1].content == "在吗"
     assert model.seen[-1].content == "你好"
-
-
-async def test_collect_full_text():
-    svc = ChatService(FakeModel(["a", "b"]))
-    full = await svc.collect(svc.astream([], "hi"))
-    assert full == "ab"

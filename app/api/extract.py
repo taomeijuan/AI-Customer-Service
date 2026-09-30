@@ -1,14 +1,14 @@
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
 class ExtractRequest(BaseModel):
-    text: str
+    text: str = Field(min_length=1)
 
 
 @router.post("/api/extract")

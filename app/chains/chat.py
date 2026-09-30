@@ -19,7 +19,3 @@ class ChatService:
         messages = self._prompt.format_messages(history=history, input=user_input)
         async for chunk in self._model.astream(messages):
             yield chunk.text
-
-    @staticmethod
-    async def collect(stream: AsyncIterator[str]) -> str:
-        return "".join([p async for p in stream])

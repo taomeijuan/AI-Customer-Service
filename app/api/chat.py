@@ -5,9 +5,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from langchain.messages import AIMessage, HumanMessage
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from app.memory.trimmer import trim_history
+from app.memory.trimmer import count_tokens, trim_history
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -15,7 +15,7 @@ router = APIRouter()
 
 class ChatRequest(BaseModel):
     conversation_id: str | None = None
-    message: str
+    message: str = Field(min_length=1)
 
 
 async def get_or_create_session(
@@ -38,23 +38,29 @@ async def chat_stream(
     session: Annotated[tuple[str, list], Depends(get_or_create_session)],
 ) -> AsyncIterable[ServerSentEvent]:
     cid, history = session
+    store = request.app.state.store
     service = request.app.state.chat_service
     settings = request.app.state.settings
 
     yield ServerSentEvent(event="meta", data={"conversation_id": cid})
     pieces: list[str] = []
+    appended = False
     try:
-        trimmed = trim_history(history, budget_tokens=settings.token_budget)
+        # 预算计入当前输入：历史预算 = 总预算 - 本条消息 token 数
+        budget = max(settings.token_budget - count_tokens(HumanMessage(req.message)), 0)
+        trimmed = trim_history(history, budget_tokens=budget)
         async for piece in service.astream(trimmed, req.message):
             pieces.append(piece)
             yield ServerSentEvent(event="delta", data={"text": piece})
+        await store.append(cid, [HumanMessage(req.message), AIMessage("".join(pieces))])
+        appended = True
+        yield ServerSentEvent(event="done", data={"conversation_id": cid})
     except Exception:
         logger.exception("chat stream failed, conversation_id=%s", cid)
         yield ServerSentEvent(
             event="error", data={"message": "服务暂时不可用，请稍后重试"}
         )
         return
-    await request.app.state.store.append(
-        cid, [HumanMessage(req.message), AIMessage("".join(pieces))]
-    )
-    yield ServerSentEvent(event="done", data={"conversation_id": cid})
+    finally:
+        if not appended:  # 出错或客户端断开且未回填：清掉空会话防泄漏
+            await store.remove_if_empty(cid)

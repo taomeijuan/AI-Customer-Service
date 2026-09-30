@@ -82,4 +82,10 @@ def test_upstream_error_emits_error_event_and_no_history_append():
     assert resp.status_code == 200  # SSE 已起流，错误走事件而非状态码
     events = sse_events(resp)
     assert events[-1][0] == "error" and "message" in events[-1][1]
-    assert all(len(v) == 0 for v in store._sessions.values())  # 出错不回填历史
+    assert store._sessions == {}  # 出错不回填，且新会话空壳已被清理
+
+
+def test_empty_message_422():
+    client = make_client()
+    resp = client.post("/api/chat/stream", json={"message": ""})
+    assert resp.status_code == 422

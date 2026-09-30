@@ -1,4 +1,4 @@
-from langchain.messages import HumanMessage
+from langchain.messages import AIMessage, HumanMessage
 
 from app.memory.trimmer import count_tokens, trim_history
 
@@ -19,15 +19,14 @@ def test_over_budget_drops_oldest():
     assert kept == [msgs[1], msgs[2]]
 
 
-def test_only_newest_fits():
-    msgs = [long, long, short]
-    # 预算连「short + 一条 long」都装不下 → 只留最新一条
-    budget = count_tokens(short) + 1
-    kept = trim_history(msgs, budget_tokens=budget)
-    assert kept == [msgs[2]]
+def test_keeps_last_round_even_over_budget():
+    # 预算只装得下最后一条 AI 回复 → 也必须整轮保留（H+A），不能留孤儿回复
+    big_h = HumanMessage("字" * 900)
+    a = AIMessage("好的")
+    kept = trim_history([big_h, a], budget_tokens=count_tokens(a))
+    assert kept == [big_h, a]
 
 
-def test_always_keeps_last_even_if_over():
+def test_always_keeps_last_round_single_message():
     big = HumanMessage("字" * 900)
-    kept = trim_history([big], budget_tokens=100)
-    assert kept == [big]  # min_keep：至少保留最近 1 条
+    assert trim_history([big], budget_tokens=1) == [big]  # 仅一条历史时原样保留

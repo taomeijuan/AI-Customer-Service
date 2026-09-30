@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from app.extraction.schemas import AfterSalesExtraction
-from app.extraction.service import ExtractionService
+from app.extraction.service import ExtractionService, build_structured_model
 
 SAMPLES = Path(__file__).parent / "data" / "after_sales_samples.jsonl"
 
@@ -23,9 +23,7 @@ pytestmark = [
 async def test_extraction_sample(sample):
     from app.core.llm import get_chat_model
 
-    svc = ExtractionService(
-        get_chat_model().with_structured_output(AfterSalesExtraction, include_raw=True)
-    )
+    svc = ExtractionService(build_structured_model(get_chat_model()))
     got = await svc.extract(sample["text"])
     exp = sample["expected"]
     assert got.issue_type == exp["issue_type"]

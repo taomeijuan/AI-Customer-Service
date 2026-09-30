@@ -10,6 +10,14 @@ EXTRACTION_PROMPT = (
 )
 
 
+def build_structured_model(model: Any) -> Any:
+    """method=function_calling：DeepSeek 等兼容上游不支持 json_schema response_format，
+    官方支持 function calling（Context7 双向核对 2026-09-30，用户拍板）。"""
+    return model.with_structured_output(
+        AfterSalesExtraction, include_raw=True, method="function_calling"
+    )
+
+
 class ExtractionService:
     """structured_model: ChatOpenAI.with_structured_output(AfterSalesExtraction, include_raw=True)"""
 

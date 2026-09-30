@@ -6,7 +6,7 @@ from app.chains.chat import ChatService
 from app.core.config import get_settings
 from app.core.llm import get_chat_model
 from app.extraction.schemas import AfterSalesExtraction
-from app.extraction.service import ExtractionService
+from app.extraction.service import ExtractionService, build_structured_model
 from app.memory.session import SessionStore
 
 
@@ -16,7 +16,7 @@ def create_app() -> FastAPI:
     app.state.store = SessionStore()
     model = get_chat_model()
     app.state.chat_service = ChatService(model)
-    structured = model.with_structured_output(AfterSalesExtraction, include_raw=True)
+    structured = build_structured_model(model)
     app.state.extract_service = ExtractionService(structured)
 
     @app.get("/healthz")

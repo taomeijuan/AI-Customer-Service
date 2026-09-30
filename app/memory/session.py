@@ -26,3 +26,9 @@ class SessionStore:
         async with self._lock:
             history = self._sessions[conversation_id]  # 不存在时 KeyError 由调用方处理
             history.extend(messages)
+
+    async def remove_if_empty(self, conversation_id: str) -> None:
+        """清理空会话（流中断/出错且未回填时防泄漏）。"""
+        async with self._lock:
+            if not self._sessions.get(conversation_id):
+                self._sessions.pop(conversation_id, None)

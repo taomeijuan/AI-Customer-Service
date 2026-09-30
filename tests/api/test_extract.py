@@ -40,3 +40,9 @@ def test_extract_missing_field_422():
     client = make_client(create_app())  # 未注入也应有校验层兜底
     resp = client.post("/api/extract", json={})
     assert resp.status_code == 422
+
+
+def test_extract_empty_text_422():
+    client = make_client(create_app())
+    resp = client.post("/api/extract", json={"text": ""})
+    assert resp.status_code == 422
