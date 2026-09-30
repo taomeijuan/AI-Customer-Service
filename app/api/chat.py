@@ -50,8 +50,9 @@ async def chat_stream(
         budget = max(settings.token_budget - count_tokens(HumanMessage(req.message)), 0)
         trimmed = trim_history(history, budget_tokens=budget)
         async for piece in service.astream(trimmed, req.message):
-            pieces.append(piece)
-            yield ServerSentEvent(event="delta", data={"text": piece})
+            if piece:  # 跳过 role-only 空块，减少空 delta 噪声
+                pieces.append(piece)
+                yield ServerSentEvent(event="delta", data={"text": piece})
         await store.append(cid, [HumanMessage(req.message), AIMessage("".join(pieces))])
         appended = True
         yield ServerSentEvent(event="done", data={"conversation_id": cid})

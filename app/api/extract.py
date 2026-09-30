@@ -20,4 +20,7 @@ async def extract(req: ExtractRequest, request: Request) -> dict:
         raise HTTPException(
             status_code=422, detail="无法解析该售后描述，请补充订单号或诉求信息"
         )
+    except Exception:
+        logger.exception("extract upstream error")
+        raise HTTPException(status_code=502, detail="上游服务暂时不可用，请稍后重试")
     return result.model_dump()

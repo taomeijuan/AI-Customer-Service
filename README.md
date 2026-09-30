@@ -14,8 +14,8 @@ uv run uvicorn app.main:app --port 8000
 
 ```bash
 bash scripts/acceptance.sh           # 三个端到端场景（另开终端保持服务运行）
-uv run pytest -q                     # 单元测试（31 个）
-uv run pytest -m eval -v             # 售后抽取标注样例集（需 .env 真实上游）
+uv run pytest -q -m "not eval"       # 单元测试（33 个，不依赖真实上游）
+uv run pytest -m eval -v             # 售后抽取标注样例集 8 条（需 .env 真实上游）
 ```
 
 ## API

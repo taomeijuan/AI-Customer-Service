@@ -46,3 +46,13 @@ def test_extract_empty_text_422():
     client = make_client(create_app())
     resp = client.post("/api/extract", json={"text": ""})
     assert resp.status_code == 422
+
+
+def test_extract_upstream_error_502():
+    class Boom:
+        async def ainvoke(self, messages):
+            raise RuntimeError("upstream down")
+
+    client = make_client(Boom())
+    resp = client.post("/api/extract", json={"text": "订单A123要退款"})
+    assert resp.status_code == 502

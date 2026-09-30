@@ -1,6 +1,7 @@
 import json
 
 from fastapi.testclient import TestClient
+from langchain.messages import HumanMessage
 
 from app.chains.chat import ChatService
 from app.memory.session import SessionStore
@@ -89,3 +90,31 @@ def test_empty_message_422():
     client = make_client()
     resp = client.post("/api/chat/stream", json={"message": ""})
     assert resp.status_code == 422
+
+
+def test_token_budget_covers_current_input():
+    """回归：预算必须扣除当前输入，否则用户超长消息可把历史全部挤出预算而不报警。"""
+    from types import SimpleNamespace
+
+    from app.memory.trimmer import count_tokens
+
+    huge = "很" * 50
+    store = SessionStore()
+    model = FakeModel(["回"])
+    app = create_app()
+    app.state.store = store
+    app.state.chat_service = ChatService(model)
+    # 预算 = 当前输入 token + 2：扣除当前输入后历史只剩一条 AI 回复的空间
+    app.state.settings = SimpleNamespace(
+        token_budget=count_tokens(HumanMessage(huge)) + 2
+    )
+    client = TestClient(app)
+
+    r1 = client.post("/api/chat/stream", json={"message": "第一句"})
+    cid = sse_events(r1)[0][1]["conversation_id"]
+    client.post("/api/chat/stream", json={"conversation_id": cid, "message": "第二句"})
+    client.post("/api/chat/stream", json={"conversation_id": cid, "message": huge})
+
+    seen_contents = [m.content for m in model.seen]
+    assert "第一句" not in seen_contents  # 被预算挤出（若未扣除当前输入则会保留）
+    assert seen_contents[1] == "第二句"  # 至少保留最近一轮（H2+A2）

@@ -9,7 +9,7 @@ echo "=== 1) SSE 流式回复（逐 token delta 事件）==="
 RESP=$(curl -sN -X POST "$BASE/api/chat/stream" -H 'Content-Type: application/json' \
   -d '{"message": "你好，我想退一台空气炸锅，还没拆封"}')
 echo "$RESP"
-CID=$(echo "$RESP" | grep '^data:' | head -1 | sed 's/^data://' \
+CID=$(echo "$RESP" | grep -m1 '^data:' | sed 's/^data://' \
   | python3 -c 'import sys,json;print(json.load(sys.stdin)["conversation_id"])')
 echo
 echo "conversation_id=$CID"
