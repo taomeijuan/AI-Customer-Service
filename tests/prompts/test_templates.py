@@ -21,5 +21,6 @@ def test_empty_history_renders_system_human_only():
 
 def test_system_prompt_has_constraints():
     # 行为约束关键词在文案里（防文案回退）；文案本身按工作要求走人工核对
-    for kw in ("不知道", "转人工", "电商"):
+    # 「对话记忆可用」与「实时数据查不到」必须分开表述（ch01 验收2 的根因修复）
+    for kw in ("直接引用", "查不到", "转人工", "电商"):
         assert kw in SYSTEM_PROMPT
