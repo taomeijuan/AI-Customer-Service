@@ -209,7 +209,7 @@ function addToolChip(bubble, name, running) {
   const chips = bubble.querySelector('.tools');
   const chip = document.createElement('span');
   chip.className = 'chip' + (running ? ' running' : '');
-  chip.innerHTML = `🔧 <b>${name}</b> · ${running ? '查询中' : '完成'}`;
+  chip.textContent = `🔧 ${name} · ${running ? '查询中' : '完成'}`;  // 工具名来自模型，禁用 innerHTML 防 XSS
   chips.appendChild(chip);
   return chip;
 }
@@ -276,7 +276,7 @@ async function send() {
             const chip = chips[chips.length - 1];
             if (chip) {
               chip.classList.remove('running');
-              chip.innerHTML = `🔧 <b>${payload.tool}</b> · ${payload.ok ? '完成' : '失败'}`;
+              chip.textContent = `🔧 ${payload.tool} · ${payload.ok ? '完成' : '失败'}`;
               if (!payload.ok) chip.classList.add('fail');
             }
           }

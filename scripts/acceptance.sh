@@ -29,8 +29,10 @@ echo "=== 4) Function Calling（应出现 tool 状态帧后收敛回答）==="
 TOOL_STREAM=$(curl -sN -X POST "$BASE/api/chat/stream" -H 'Content-Type: application/json' \
   -d '{"user_id": "acceptance-user", "message": "订单 1001 的物流到哪了"}')
 echo "$TOOL_STREAM" | grep -E '^event:' | sort | uniq -c
-if echo "$TOOL_STREAM" | grep -q '^event: tool' && echo "$TOOL_STREAM" | grep -q '^event: done'; then
-  echo "✓ tool 帧出现且正常收敛"
+if echo "$TOOL_STREAM" | grep -q '^event: tool' \
+  && echo "$TOOL_STREAM" | grep -q '^event: delta' \
+  && echo "$TOOL_STREAM" | grep -q '^event: done'; then
+  echo "✓ tool 帧出现、正文流式收敛"
 else
   echo "✗ 未看到 tool 帧或未收敛" && exit 1
 fi

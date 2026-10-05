@@ -38,6 +38,9 @@ class FakeRegistry:
     def all(self):
         return []
 
+    def has(self, name):
+        return True  # 与真实 ToolRegistry.has 同接口
+
     async def execute(self, name, args):
         self.executed.append((name, args))
         return {"ok": True, "data": {"fake": "result"}}
@@ -130,3 +133,42 @@ async def test_tool_error_still_converges(session_factory, db_session):
     # 失败结果也回灌给模型
     second = model.calls[1]
     assert second[-1].type == "tool"
+
+
+def test_aggregate_parallel_tool_calls():
+    from app.agents.orchestrator import _aggregate_tool_calls
+
+    chunks = [
+        [{"name": "query_order", "args": '{"order', "id": "a1", "index": 0}],
+        [{"name": "query_faq", "args": '{"keyword"', "id": "a2", "index": 1}],
+        [{"args": '_no": "1001"}', "index": 0}],
+        [{"args": ': "退货"}', "index": 1}],
+    ]
+    calls = _aggregate_tool_calls(chunks)
+    assert calls == [
+        {"name": "query_order", "args": {"order_no": "1001"}, "id": "a1"},
+        {"name": "query_faq", "args": {"keyword": "退货"}, "id": "a2"},
+    ]
+
+
+async def test_leading_text_persisted_in_tool_mode(session_factory, db_session):
+    """评审 Minor 4：混发场景下，工具调用前已播报的正文必须落库。"""
+    model = FakeModel(
+        [
+            [
+                FakeChunk(text="让我查一下"),
+                FakeChunk(
+                    tool_call_chunks=[
+                        {"name": "query_faq", "args": '{"keyword": "退货"}', "id": "c1", "index": 0}
+                    ]
+                ),
+            ],
+            [FakeChunk(text="根据政策…")],
+        ]
+    )
+    o = make_orchestrator(model, session_factory)
+    _events = [e async for e in o.run(user_id="u5", conversation_id=None, message="退货政策")]
+
+    rows = (await db_session.execute(select(Message).order_by(Message.id))).scalars().all()
+    assert rows[1].content == "让我查一下"  # 先行正文落库，下轮模型可见
+    assert rows[1].tool_calls[0]["name"] == "query_faq"

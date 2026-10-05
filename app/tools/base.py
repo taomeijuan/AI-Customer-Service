@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import logging
 from typing import Any
 
@@ -31,6 +32,10 @@ class ToolRegistry:
     def all(self) -> list:
         return [e["tool"] for e in self._tools.values()]
 
+    def has(self, name: str) -> bool:
+        """注册表白名单：编排器广播工具名前先校验，防幻觉名透传前端。"""
+        return name in self._tools
+
     async def execute(self, name: str, args: dict) -> dict:
         entry = self._tools.get(name)
         if entry is None:
@@ -38,18 +43,19 @@ class ToolRegistry:
         tool_obj = entry["tool"]
         timeout, retries = entry["timeout"], entry["retries"]
 
-        try:
-            kwargs = tool_obj.args_schema.model_validate(args).model_dump()
-        except ValidationError as e:
-            return {"ok": False, "error": f"参数校验失败: {e.errors()[0]['msg']}"}
-        except AttributeError:  # 无 args_schema 的工具按原样传参
+        if getattr(tool_obj, "args_schema", None) is not None:
+            try:
+                kwargs = tool_obj.args_schema.model_validate(args).model_dump()
+            except ValidationError as e:
+                return {"ok": False, "error": f"参数校验失败: {e.errors()[0]['msg']}"}
+        else:  # 无 args_schema 的工具按原样传参
             kwargs = args
 
         fn = tool_obj.coroutine or tool_obj.func
         last_err = "执行失败"
         for attempt in range(retries + 1):
             try:
-                if asyncio.iscoroutinefunction(fn):
+                if inspect.iscoroutinefunction(fn):  # asyncio 版本 3.16 起废弃
                     data = await asyncio.wait_for(fn(**kwargs), timeout=timeout)
                 else:
                     data = await asyncio.wait_for(

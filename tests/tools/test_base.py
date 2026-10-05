@@ -79,3 +79,8 @@ async def test_retry_until_success():
 async def test_list_for_bind_tools():
     reg = make_registry()
     assert [t.name for t in reg.all()] == ["add", "boom"]
+
+
+def test_has_whitelist():
+    reg = make_registry()
+    assert reg.has("add") and not reg.has("nonexistent")

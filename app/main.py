@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -33,10 +34,15 @@ def build_registry(session, conversation_id: int, settings) -> ToolRegistry:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="ecom-cs", version="0.2.0")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        yield
+        await app.state.engine.dispose()  # 进程退出时释放连接池
+
+    app = FastAPI(title="ecom-cs", version="0.2.0", lifespan=lifespan)
     settings = get_settings()
     app.state.settings = settings
-    _, app.state.session_factory = build_engine(settings)
+    app.state.engine, app.state.session_factory = build_engine(settings)
 
     model = get_chat_model()
     structured = build_structured_model(model)

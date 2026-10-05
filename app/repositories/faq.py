@@ -10,7 +10,12 @@ class FaqRepo:
         self._session = session
 
     async def search(self, keyword: str, limit: int = 3) -> list[dict]:
-        kw = f"%{keyword}%"
+        if not keyword or not keyword.strip():
+            return []
+        escaped = (
+            keyword.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
+        kw = f"%{escaped}%"
         result = await self._session.execute(
             select(Faq)
             .where(or_(Faq.question.like(kw), Faq.answer.like(kw)))

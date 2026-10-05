@@ -5,7 +5,7 @@ from typing import Any
 
 from langchain.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from app.memory.trimmer import trim_history
+from app.memory.trimmer import trim_history_groups
 from app.prompts.templates import SYSTEM_PROMPT
 from app.repositories.conversations import ConversationsRepo
 from app.repositories.messages import MessagesRepo
@@ -77,8 +77,9 @@ class Orchestrator:
 
             await msg_repo.append(cid, [HumanMessage(message)])
             history = await msg_repo.load_history(cid)
-            # system 不落库（每轮由编排器拼接），也天然不参与裁剪
-            messages = [SystemMessage(SYSTEM_PROMPT)] + trim_history(
+            # system 不落库（每轮由编排器拼接），也天然不参与裁剪；
+            # 分组裁剪保证 tool 往返不被裁开（孤儿 tool 上游 400）
+            messages = [SystemMessage(SYSTEM_PROMPT)] + trim_history_groups(
                 history, budget_tokens=self._settings.token_budget
             )
 
@@ -104,14 +105,16 @@ class Orchestrator:
                     # ── 工具模式：执行 → 状态帧 → 落库 → 回灌 ──
                     results: list[dict] = []
                     for tc in tool_calls:
+                        # 幻觉工具名不上屏（前端 textContent 兜底，这里白名单双保险）
+                        shown = tc["name"] if registry.has(tc["name"]) else "unknown_tool"
                         yield "tool", {
-                            "tool": tc["name"],
+                            "tool": shown,
                             "args": tc["args"],
                             "status": "running",
                         }
                         outcome = await registry.execute(tc["name"], tc["args"])
                         yield "tool", {
-                            "tool": tc["name"],
+                            "tool": shown,
                             "args": tc["args"],
                             "status": "done",
                             "ok": outcome["ok"],
@@ -126,7 +129,10 @@ class Orchestrator:
                                 "content": json.dumps(outcome, ensure_ascii=False),
                             }
                         )
-                    await msg_repo.append_tool_round(cid, tool_calls, results)
+                    # 混发场景：工具调用前已播报的正文也落库，下一轮模型可见
+                    await msg_repo.append_tool_round(
+                        cid, tool_calls, results, ai_content="".join(text_pieces)
+                    )
                     feed_messages = messages + [
                         AIMessage(content="", tool_calls=tool_calls)
                     ] + [

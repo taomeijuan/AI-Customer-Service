@@ -17,8 +17,10 @@ class MessagesRepo:
         self._session = session
 
     async def append(self, conversation_id: int, messages: list[BaseMessage]) -> None:
-        """落普通消息（user / 纯文本 assistant）。"""
+        """落普通消息（user / 纯文本 assistant）。带 tool_calls 的 AIMessage 必须走 append_tool_round。"""
         for m in messages:
+            if isinstance(m, AIMessage) and m.tool_calls:
+                raise ValueError("带 tool_calls 的消息请走 append_tool_round，避免申请单丢失")
             self._session.add(
                 Message(
                     conversation_id=conversation_id,
@@ -33,16 +35,18 @@ class MessagesRepo:
         conversation_id: int,
         tool_calls: list[dict],
         tool_results: list[dict],
+        ai_content: str = "",
     ) -> None:
         """落一轮工具往返：assistant(tool_calls 申请单) + N 条 tool 结果。
 
+        ai_content：混发场景下工具调用前已播报的正文，落库保证下轮模型可见。
         tool_results: [{"id", "name", "content"}]，content 为回灌给模型的 JSON 字符串。
         """
         self._session.add(
             Message(
                 conversation_id=conversation_id,
                 role="assistant",
-                content=None,
+                content=ai_content or None,
                 tool_calls=tool_calls,
             )
         )
@@ -65,6 +69,12 @@ class MessagesRepo:
             .order_by(Message.id)
         )
         rows = result.scalars().all()
+        name_by_call_id: dict[str, str] = {}
+        for r in rows:
+            if r.role == "assistant" and r.tool_calls:
+                for tc in r.tool_calls:
+                    if tc.get("id"):
+                        name_by_call_id[tc["id"]] = tc.get("name")
         out: list[BaseMessage] = []
         for row in rows:
             if row.role == "user":
@@ -72,17 +82,11 @@ class MessagesRepo:
             elif row.role == "assistant":
                 out.append(AIMessage(content=row.content or "", tool_calls=row.tool_calls or []))
             else:  # tool：工具名从配对 assistant 的 tool_calls 里按 tool_call_id 反查
-                name = self._find_tool_name(rows, row.tool_call_id)
                 out.append(
-                    ToolMessage(content=row.content or "", tool_call_id=row.tool_call_id, name=name)
+                    ToolMessage(
+                        content=row.content or "",
+                        tool_call_id=row.tool_call_id,
+                        name=name_by_call_id.get(row.tool_call_id or ""),
+                    )
                 )
         return out
-
-    @staticmethod
-    def _find_tool_name(rows, tool_call_id: str | None) -> str | None:
-        for r in rows:
-            if r.role == "assistant" and r.tool_calls:
-                for tc in r.tool_calls:
-                    if tc.get("id") == tool_call_id:
-                        return tc.get("name")
-        return None

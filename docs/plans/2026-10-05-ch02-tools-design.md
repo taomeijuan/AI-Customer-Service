@@ -16,7 +16,7 @@
 验收标准：
 1. 聊天页问「订单 1001 的物流到哪了」→ 气泡带工具徽章，按工具返回作答
 2. 问「退货政策是什么」→ query_faq 查到并作答
-3. 问「邮费是多少」→ LIKE 查不到（faq 表故意不灌邮费条目），模型诚实答不知道——**预期漏召回，记入 dev-notes 留给下一步升级**
+3. 换个说法问费用类问题（如「运费规则是什么」）→ query_faq 被调用且 LIKE 查不到（faq 表故意不灌邮费/运费条目），模型诚实答"知识库里没有"——**预期漏召回，记入 dev-notes 留给下一步升级**。（2026-10-05 实测补充：直问「邮费是多少」会被模型理解为订单相关运费而反问订单号、不调工具，费用类政策问法更稳）
 
 ## 2. 澄清决策（已拍板）
 
@@ -147,7 +147,7 @@ SSE 事件：`meta{conversation_id}` → `tool{tool,args,status,summary?}`* → 
   - 四表 repo：建会话/落消息/重建历史（含 tool_calls JSON 往返）/工单号生成与冲突重试
   - tools：query_faq 命中与不命中、create_ticket 落库且 conversation 外键成立、base 的超时/重试/校验失败/错误包装
   - orchestrator：FakeModel 驱动「调工具→回灌→收敛」与「直答」两路径；断言回灌消息序列、SSE tool 帧序列、落库行数
-- **标注样例（Prompt/数据类替代 TDD）**：`tests/data/tool_routing_samples.jsonl` 8 条（问句→期望工具，含一条预期空转），真实模型断言选型，容 1 条波动
+- **标注样例（Prompt/数据类替代 TDD）**：`tests/data/tool_routing_samples.jsonl` 9 条（问句→期望工具，含 2 条预期不调工具的 null）。**产品决策（2026-10-05）**：模糊投诉（如"你们太气人了"）预期不建单——模型先安抚确认更符合客服逻辑；只有明确建单请求（含问题描述）才调 create_ticket（工具描述已强化"立即调用不追问"）
 - **验收**：聊天页三场景人工过 + acceptance.sh 扩展（curl 检查 tool 帧存在与 done 收敛）
 
 ## 8. 依赖与配置

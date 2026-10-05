@@ -12,10 +12,10 @@ class ConversationsRepo:
     async def ensure_conversation(
         self, user_id: str, conversation_id: int | None = None
     ) -> int:
-        """带 id 则校验存在（不存在抛 KeyError→上层 404）；不带则新建。"""
+        """带 id 则校验存在且归属该用户（否则 KeyError→上层 404）；不带则新建。"""
         if conversation_id is not None:
             conv = await self.get(conversation_id)
-            if conv is None:
+            if conv is None or conv.user_id != user_id:  # 归属校验防跨用户写会话
                 raise KeyError(f"会话不存在: {conversation_id}")
             return conversation_id
         conv = Conversation(user_id=user_id)
