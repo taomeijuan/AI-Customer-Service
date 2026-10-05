@@ -92,8 +92,9 @@ async def test_tool_path_feed_back_and_stream(session_factory, db_session):
     assert tool_frames[0]["status"] == "running" and tool_frames[0]["tool"] == "query_faq"
     assert tool_frames[1]["status"] == "done"
     assert reg.executed == [("query_faq", {"keyword": "退货"})]
-    # 第二次调用收到回灌：…human → ai(申请, type=ai) → tool(结果)
+    # 第二次调用收到回灌：system → …human → ai(申请, type=ai) → tool(结果)
     second = model.calls[1]
+    assert second[0].type == "system"  # 客服角色每轮由编排器拼接，不落库
     assert second[-1].type == "tool"
     assert second[-2].type == "ai"
     assert len(model.calls) == 2

@@ -1,0 +1,9 @@
+{"text": "订单 1001 的物流到哪了", "expected_tool": "query_logistics"}
+{"text": "我的订单 1002 什么状态了", "expected_tool": "query_order"}
+{"text": "你们店的空气炸锅多少钱", "expected_tool": "query_product"}
+{"text": "退货政策是什么", "expected_tool": "query_faq"}
+{"text": "这个问题解决不了，直接给我转人工建个工单吧", "expected_tool": "create_ticket"}
+{"text": "在吗", "expected_tool": null}
+{"text": "邮费是多少", "expected_tool": "query_faq"}
+{"text": "订单 1003 买的什么东西", "expected_tool": "query_order"}
+{"text": "你们太气人了，我要投诉！", "expected_tool": null}

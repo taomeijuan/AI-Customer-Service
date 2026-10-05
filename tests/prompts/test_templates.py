@@ -21,6 +21,8 @@ def test_empty_history_renders_system_human_only():
 
 def test_system_prompt_has_constraints():
     # 行为约束关键词在文案里（防文案回退）；文案本身按工作要求走人工核对
-    # 「对话记忆可用」与「实时数据查不到」必须分开表述（ch01 验收2 的根因修复）
-    for kw in ("直接引用", "查不到", "转人工", "电商"):
+    # ①「对话记忆可用」与「实时数据查不到」分开表述（ch01 验收2 根因修复）
+    # ②「政策费用类必须先查知识库」（ch02 验收3 漏召回演示的前提）
+    # ③「明确建单才调 create_ticket」（投诉先安抚的产品决策）
+    for kw in ("直接引用", "查不到", "query_faq", "create_ticket", "电商"):
         assert kw in SYSTEM_PROMPT

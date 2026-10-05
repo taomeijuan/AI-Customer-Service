@@ -10,7 +10,7 @@ def build_query_faq_tool(session: Any):
 
     @tool
     async def query_faq(keyword: str) -> dict:
-        """根据关键词检索常见问题知识库。当用户询问政策、流程、规则类问题时调用。"""
+        """根据关键词检索常见问题知识库。凡涉及平台政策、费用、流程（退货/退款/邮费/运费/发货/发票等）的问题都必须先调用本工具，禁止凭记忆回答政策。"""
         rows = await FaqRepo(session).search(keyword)
         return {"count": len(rows), "items": rows}
 
