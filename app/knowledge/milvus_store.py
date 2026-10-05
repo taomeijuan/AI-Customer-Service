@@ -27,11 +27,33 @@ class MilvusStore:
         index_params.add_index(field_name="vector", index_type="AUTOINDEX", metric_type="COSINE")
         self._client.create_index(self.collection, index_params=index_params)
         self._client.load_collection(self.collection)
+        self._wait_loaded()
 
     def recreate(self) -> None:
         if self._client.has_collection(self.collection):
             self._client.drop_collection(self.collection)
+            self._wait_gone()
         self.ensure_collection()
+
+    def _wait_gone(self, timeout: float = 10.0) -> None:
+        """drop 是异步生效的：同名重建前轮询等它消失（否则偶发竞争）。"""
+        import time
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not self._client.has_collection(self.collection):
+                return
+            time.sleep(0.1)
+
+    def _wait_loaded(self, timeout: float = 30.0) -> None:
+        import time
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            state = self._client.get_load_state(self.collection)
+            if state and state.get("state") is not None and "Loaded" in str(state):
+                return
+            time.sleep(0.2)
 
     def drop(self) -> None:
         if self._client.has_collection(self.collection):
@@ -55,6 +77,7 @@ class MilvusStore:
             data=[vector],
             limit=top_k,
             output_fields=_OUTPUT_FIELDS,
+            consistency_level="Strong",  # 写后立读可见（upsert→search 竞态）
         )
         hits = []
         for hit in results[0]:

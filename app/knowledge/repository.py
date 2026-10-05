@@ -9,16 +9,17 @@ class KnowledgeRepo:
     def __init__(self, session) -> None:
         self._session = session
 
-    async def count_existing(self, chunks: list[dict]) -> int:
-        """统计内容完全一致的已有行数（幂等重跑的复用计数）。"""
+    async def count_existing(self, chunks: list) -> int:
+        """统计内容完全一致的已有行数（幂等重跑的复用计数）。接受 dict 或 Chunk。"""
         n = 0
         for c in chunks:
+            get = (lambda k: c[k]) if isinstance(c, dict) else (lambda k: getattr(c, k))
             existing = (
                 await self._session.execute(
                     select(KnowledgeChunk.id).where(
-                        KnowledgeChunk.category == c["category"],
-                        KnowledgeChunk.questions == c["questions"],
-                        KnowledgeChunk.answer == c["answer"],
+                        KnowledgeChunk.category == get("category"),
+                        KnowledgeChunk.questions == get("questions"),
+                        KnowledgeChunk.answer == get("answer"),
                     )
                 )
             ).scalar()
