@@ -17,7 +17,7 @@ def build_create_ticket_tool(session: Any, conversation_id: int):
 
     @tool(args_schema=CreateTicketInput)
     async def create_ticket(description: str, ticket_type: str) -> dict:
-        """创建人工客服工单。当用户明确要求人工、投诉，或问题超出客服能力时调用。"""
+        """创建人工客服工单。用户一旦明确要求转人工/建单/投诉，必须立即调用本工具，用用户已提供的信息填写 description，不要再追问、不要先查询其他信息。"""
         ticket_no = await TicketsRepo(session).create(
             conversation_id=conversation_id,
             description=description,
