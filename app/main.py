@@ -12,6 +12,8 @@ from app.core.llm import get_chat_model
 from app.db.engine import build_engine
 from app.extraction.schemas import AfterSalesExtraction
 from app.extraction.service import ExtractionService, build_structured_model
+from app.knowledge.embedder import build_embedder
+from app.knowledge.milvus_store import MilvusStore
 from app.tools.base import ToolRegistry
 from app.tools.ecommerce import query_logistics, query_order, query_product
 from app.tools.faq import build_query_faq_tool
@@ -20,7 +22,7 @@ from app.tools.ticket import build_create_ticket_tool
 STATIC_DIR = Path(__file__).parent / "static"
 
 
-def build_registry(session, conversation_id: int, settings) -> ToolRegistry:
+def build_registry(session, conversation_id: int, settings, embedder, milvus_store) -> ToolRegistry:
     """请求级工具注册表：mock 三件套全局可用，faq/工单工具绑请求会话。"""
     reg = ToolRegistry(
         default_timeout=settings.tool_timeout, default_retries=settings.tool_retries
@@ -28,7 +30,7 @@ def build_registry(session, conversation_id: int, settings) -> ToolRegistry:
     reg.register(query_order)
     reg.register(query_product)
     reg.register(query_logistics)
-    reg.register(build_query_faq_tool(session))
+    reg.register(build_query_faq_tool(embedder, milvus_store, settings))
     reg.register(build_create_ticket_tool(session, conversation_id))
     return reg
 
@@ -39,17 +41,23 @@ def create_app() -> FastAPI:
         yield
         await app.state.engine.dispose()  # 进程退出时释放连接池
 
-    app = FastAPI(title="ecom-cs", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="ecom-cs", version="0.3.0", lifespan=lifespan)
     settings = get_settings()
     app.state.settings = settings
     app.state.engine, app.state.session_factory = build_engine(settings)
+    app.state.embedder = build_embedder(settings)
+    app.state.milvus_store = MilvusStore(
+        uri=settings.milvus_uri, collection=settings.milvus_collection
+    )
 
     model = get_chat_model()
     structured = build_structured_model(model)
     app.state.extract_service = ExtractionService(structured)
     app.state.orchestrator = Orchestrator(
         model=model,
-        registry_factory=lambda session, cid: build_registry(session, cid, settings),
+        registry_factory=lambda session, cid: build_registry(
+            session, cid, settings, app.state.embedder, app.state.milvus_store
+        ),
         session_factory=app.state.session_factory,
         settings=settings,
     )

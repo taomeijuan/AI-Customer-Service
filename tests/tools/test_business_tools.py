@@ -1,8 +1,27 @@
+from types import SimpleNamespace
+
 import pytest
 
 from app.tools.ecommerce import query_logistics, query_order, query_product
 from app.tools.faq import build_query_faq_tool
 from app.tools.ticket import build_create_ticket_tool
+
+SETTINGS_STUB = SimpleNamespace(retrieval_top_k=3, retrieval_score_threshold=0.45)
+
+
+class FakeEmbedder:
+    async def embed_one(self, text):
+        return [1.0, 0.0]
+
+
+class FakeMilvus:
+    def __init__(self, hits):
+        self.hits = hits
+        self.queries = []
+
+    def search(self, vector, top_k, score_threshold=None):
+        self.queries.append({"vector": vector, "top_k": top_k, "threshold": score_threshold})
+        return self.hits
 
 
 async def test_query_order_shape():
@@ -24,15 +43,31 @@ async def test_query_logistics_shape():
 
 
 @pytest.mark.usefixtures("db_session")
-async def test_query_faq_tool_hit_and_miss(db_session):
-    from app.db.models import Faq
-
-    db_session.add(Faq(question="退货政策是什么", answer="7天无理由", category="售后"))
-    await db_session.commit()
-    faq_tool = build_query_faq_tool(db_session)
-    out = await faq_tool.ainvoke({"keyword": "退货"})
-    assert out["count"] == 1 and "7天无理由" in out["items"][0]["answer"]
-    out2 = await faq_tool.ainvoke({"keyword": "邮费"})
+async def test_query_faq_vector_search_contract(db_session):
+    """ch03：内核换向量检索，契约不变（{count, items}）。"""
+    milvus = FakeMilvus(
+        hits=[
+            {
+                "id": 1,
+                "distance": 0.82,
+                "entity": {
+                    "questions": "邮费与包邮规则",
+                    "answer": "满99元包邮，否则8元邮费",
+                    "category": "售后政策>运费说明",
+                },
+            }
+        ]
+    )
+    faq_tool = build_query_faq_tool(FakeEmbedder(), milvus, SETTINGS_STUB)
+    out = await faq_tool.ainvoke({"keyword": "邮费多少"})
+    assert out["count"] == 1 and "满99" in out["items"][0]["answer"]
+    assert milvus.queries[0]["top_k"] == 3
+    assert milvus.queries[0]["threshold"] == 0.45
+    # 低分全滤掉 → 空结果（对应 ch02 的「查不到」语义）
+    empty = build_query_faq_tool(
+        FakeEmbedder(), FakeMilvus(hits=[]), SETTINGS_STUB
+    )
+    out2 = await empty.ainvoke({"keyword": "邮费"})
     assert out2["count"] == 0 and out2["items"] == []
 
 
