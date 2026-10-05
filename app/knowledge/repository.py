@@ -9,6 +9,23 @@ class KnowledgeRepo:
     def __init__(self, session) -> None:
         self._session = session
 
+    async def count_existing(self, chunks: list[dict]) -> int:
+        """统计内容完全一致的已有行数（幂等重跑的复用计数）。"""
+        n = 0
+        for c in chunks:
+            existing = (
+                await self._session.execute(
+                    select(KnowledgeChunk.id).where(
+                        KnowledgeChunk.category == c["category"],
+                        KnowledgeChunk.questions == c["questions"],
+                        KnowledgeChunk.answer == c["answer"],
+                    )
+                )
+            ).scalar()
+            if existing is not None:
+                n += 1
+        return n
+
     async def upsert_chunks(self, chunks: list[dict]) -> list[int]:
         """按 (category, questions, answer) 内容精确匹配复用已有行（文档重跑不重复建）。"""
         ids: list[int] = []
