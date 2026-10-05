@@ -4,13 +4,18 @@
 
 - **ch01 纯对话**：多轮 + SSE 流式 + Prompt 模板 + 售后结构化抽取
 - **ch02 工具链**：LangChain @tool 五工具（查订单/商品/物流 mock、FAQ 查表、建工单），模型单轮自主选工具，结果回灌流式收敛；会话与消息落 MySQL
+- **ch03 知识库**：Markdown 知识文档结构感知切分 + 历史对话挖知识（LLM 抽 QA），MySQL/Milvus 双写幂等建库（BGE-M3 向量化）；query_faq 内核升级向量语义检索，换说法也能召回
 
 ## 快速开始
 
 ```bash
 uv sync                            # 安装依赖（需 uv）
-docker-compose up -d               # 起 MySQL（业务库 ecom_cs + 测试库 ecom_cs_test，首启自动建表灌数据）
+docker-compose up -d               # MySQL + Milvus（etcd/minio 伴生；首启自动建表灌种子）
+bash scripts/init_ch03.sh          # ch03 两表（volume 已存在时手动执行一次）
+ollama pull bge-m3                 # 嵌入模型（需本地 Ollama）
 cp .env.example .env               # 填入上游 base_url / api_key / model
+uv run python -m app.knowledge.build   # 离线建库：docs/knowledge/*.md → MySQL+Milvus（幂等可重跑）
+uv run python -m app.jobs.mine_qa      # 可选：从历史对话挖知识入库
 uv run uvicorn app.main:app --port 8000
 # 浏览器打开 http://localhost:8000 即聊天页
 ```
@@ -18,9 +23,9 @@ uv run uvicorn app.main:app --port 8000
 ## 验收
 
 ```bash
-bash scripts/acceptance.sh           # 四个端到端场景（另开终端保持服务运行）
-uv run pytest -q -m "not eval"       # 单元测试（53 个，含真 MySQL 集成）
-uv run pytest -m eval -v             # 真实上游样例集（抽取 8 条 + 工具选型 9 条）
+bash scripts/acceptance.sh           # 五个端到端场景（另开终端保持服务运行）
+uv run pytest -q -m "not eval"       # 单元测试（99 个，含真 MySQL/Milvus 集成）
+uv run pytest -m eval -v             # 真实上游样例集（抽取 8 + 工具路由 9 + 语义检索 8）
 ```
 
 ## API
@@ -36,16 +41,18 @@ uv run pytest -m eval -v             # 真实上游样例集（抽取 8 条 + �
 ```
 app/
 ├── core/         config（pydantic-settings）、llm（ChatOpenAI 工厂，OpenAI 协议直连）
-├── db/           engine（SQLAlchemy async）、models（faq/conversations/messages/tickets 四表 ORM）
+├── db/           engine（SQLAlchemy async）、models（业务四表 + knowledge_chunks/qa_extraction_staging）
 ├── repositories/ conversations/messages/faq/tickets 数据访问层
-├── memory/       trimmer（tiktoken 历史裁剪）
-├── tools/        base（ToolRegistry：校验/超时/重试/错误包装）+ 五个 @tool
+├── memory/       trimmer（tiktoken 分组裁剪，tool 往返原子保留）
+├── knowledge/    splitter（结构感知切分）、embedder（bge-m3）、milvus_store、ingest（双写状态机）、build（建库 CLI）
+├── jobs/         mine_qa（历史对话挖知识 CLI：抽取→暂存→去重→入库）
+├── tools/        base（ToolRegistry：校验/超时/重试/错误包装）+ 五个 @tool（query_faq 为向量检索内核）
 ├── agents/       orchestrator（bind_tools 单轮编排：选工具→执行→回灌→流式收敛）
 ├── prompts/      客服 System Prompt + ChatPromptTemplate
-├── chains/       ChatService（无工具流式回答单元，ch02 起由 orchestrator 调度）
 ├── extraction/   售后结构化 schema + with_structured_output
 ├── api/          SSE 端点、extract 端点
 └── static/       聊天页（气泡 + 逐字渲染 + 工具徽章）
+docs/knowledge/    知识文档（售后政策/商品FAQ/售后手册——离线建库的输入）
 db/init/           建库建表与种子脚本（docker-entrypoint 自动执行）
 ```
 
