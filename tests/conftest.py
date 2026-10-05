@@ -20,7 +20,14 @@ async def session_factory():
 async def db_session(session_factory):
     async with session_factory() as session:
         await session.execute(text("SET FOREIGN_KEY_CHECKS=0"))
-        for t in ("messages", "tickets", "conversations", "faq"):
+        for t in (
+            "messages",
+            "tickets",
+            "conversations",
+            "faq",
+            "knowledge_chunks",
+            "qa_extraction_staging",
+        ):
             await session.execute(text(f"TRUNCATE TABLE {t}"))
         await session.execute(text("SET FOREIGN_KEY_CHECKS=1"))
         await session.commit()

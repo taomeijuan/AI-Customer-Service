@@ -40,3 +40,35 @@ async def test_faq_and_ticket_defaults(db_session):
     db_session.add(t)
     await db_session.commit()
     assert t.status == "待处理"
+
+
+@pytest.mark.usefixtures("db_session")
+async def test_knowledge_chunk_roundtrip(db_session):
+    from app.db.models import KnowledgeChunk
+
+    k = KnowledgeChunk(
+        category="售后政策>退款",
+        questions="退款多久到账",
+        answer="1-3个工作日原路退回",
+        section_path="售后政策/退款/退款时限",
+        content_type="policy",
+        is_key_clause=1,
+    )
+    db_session.add(k)
+    await db_session.commit()
+    assert k.id and k.vectorize_status == "pending" and k.is_key_clause == 1
+
+
+@pytest.mark.usefixtures("db_session")
+async def test_qa_staging_roundtrip(db_session):
+    from app.db.models import QaExtractionStaging
+
+    s = QaExtractionStaging(
+        batch_no="mine-20261005-ab12cd34",
+        source_ref="3",
+        question="邮费多少",
+        answer="满99包邮",
+    )
+    db_session.add(s)
+    await db_session.commit()
+    assert s.status == "extracted"
