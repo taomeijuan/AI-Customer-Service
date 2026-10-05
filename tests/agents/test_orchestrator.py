@@ -25,7 +25,7 @@ class FakeModel:
         return self
 
     async def astream(self, messages):
-        self.calls.append([m.type for m in messages])
+        self.calls.append(list(messages))  # 记录消息对象，测试按需取 .type/.content
         step = self.script[len(self.calls) - 1]
         for piece in step:
             yield piece
@@ -46,7 +46,7 @@ class FakeRegistry:
 def make_orchestrator(model, session_factory, registry=None):
     return Orchestrator(
         model=model,
-        registry_factory=lambda session: registry or FakeRegistry(),
+        registry_factory=lambda session, cid: registry or FakeRegistry(),
         session_factory=session_factory,
         settings=SimpleNamespace(token_budget=4000),
     )
@@ -94,8 +94,8 @@ async def test_tool_path_feed_back_and_stream(session_factory, db_session):
     assert reg.executed == [("query_faq", {"keyword": "退货"})]
     # 第二次调用收到回灌：…human → ai(申请, type=ai) → tool(结果)
     second = model.calls[1]
-    assert second[-1] == "tool"
-    assert second[-2] == "ai"
+    assert second[-1].type == "tool"
+    assert second[-2].type == "ai"
     assert len(model.calls) == 2
     deltas = "".join(v.get("text", "") for k, v in events if k == "delta")
     assert deltas == "根据政策…"  # delta 只来自第二轮
@@ -128,4 +128,4 @@ async def test_tool_error_still_converges(session_factory, db_session):
     assert tool_frames[1]["ok"] is False
     # 失败结果也回灌给模型
     second = model.calls[1]
-    assert second[-1] == "tool"
+    assert second[-1].type == "tool"

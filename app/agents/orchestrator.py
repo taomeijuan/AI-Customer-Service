@@ -3,9 +3,10 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
-from langchain.messages import AIMessage, HumanMessage, ToolMessage
+from langchain.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from app.memory.trimmer import trim_history
+from app.prompts.templates import SYSTEM_PROMPT
 from app.repositories.conversations import ConversationsRepo
 from app.repositories.messages import MessagesRepo
 
@@ -68,14 +69,18 @@ class Orchestrator:
         async with self._session_factory() as session:
             conv_repo = ConversationsRepo(session)
             msg_repo = MessagesRepo(session)
-            registry = self._registry_factory(session)
 
             cid = await conv_repo.ensure_conversation(user_id, conversation_id)
             yield "meta", {"conversation_id": cid}
+            # 注册表在会话确定后构建：create_ticket 等工具需闭包注入 conversation_id
+            registry = self._registry_factory(session, cid)
 
             await msg_repo.append(cid, [HumanMessage(message)])
             history = await msg_repo.load_history(cid)
-            messages = trim_history(history, budget_tokens=self._settings.token_budget)
+            # system 不落库（每轮由编排器拼接），也天然不参与裁剪
+            messages = [SystemMessage(SYSTEM_PROMPT)] + trim_history(
+                history, budget_tokens=self._settings.token_budget
+            )
 
             try:
                 # ── 第一次调用：绑工具，边流边判是否走工具模式 ──
