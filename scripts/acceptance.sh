@@ -38,4 +38,20 @@ else
 fi
 
 echo
+echo "=== 5) 向量语义检索（换说法问题应召回运费知识）==="
+FAQ_STREAM=$(curl -sN -X POST "$BASE/api/chat/stream" -H 'Content-Type: application/json' \
+  -d '{"user_id": "acceptance-user", "message": "你们的运费规则是什么？"}')
+echo "$FAQ_STREAM" | grep -E '^event:' | sort | uniq -c
+ANSWER=$(echo "$FAQ_STREAM" | grep '^data:' | sed 's/^data://' | python3 -c '
+import sys, json
+print("".join(json.loads(l).get("text","") for l in sys.stdin if json.loads(l).get("text")))
+')
+echo "回复: $ANSWER"
+if echo "$FAQ_STREAM" | grep -q '^event: tool' && echo "$ANSWER" | grep -qE '包邮|运费|邮费'; then
+  echo "✓ 语义检索召回运费知识并作答"
+else
+  echo "✗ 未召回或未作答" && exit 1
+fi
+
+echo
 echo "=== 验收完成 ==="
