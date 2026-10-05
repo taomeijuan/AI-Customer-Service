@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     tool_timeout: float = 3.0
     tool_retries: int = 1
 
+    ollama_embed_base_url: str = "http://localhost:11434/v1"
+    embed_model: str = "bge-m3"
+    milvus_uri: str = "http://localhost:19530"
+    milvus_collection: str = "knowledge"
+    retrieval_top_k: int = 3
+    retrieval_score_threshold: float = 0.45
+    mine_batch_size: int = 10
+
 
 @lru_cache
 def get_settings() -> Settings:
