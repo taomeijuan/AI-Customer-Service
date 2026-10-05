@@ -2,7 +2,7 @@
 # 四表 DDL（用户 2026-10-05 提供，原文为准）在业务库与测试库各执行一遍
 set -e
 for db in ecom_cs ecom_cs_test; do
-  mysql -uroot -proot123 "$db" << 'EOF'
+  mysql -uroot -proot123 --default-character-set=utf8mb4 "$db" << 'EOF'
 -- 会话壳:一通对话的统一身份,messages / tickets 都引用它
 CREATE TABLE conversations (
   id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '会话主键',

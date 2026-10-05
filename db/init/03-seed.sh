@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # faq 种子数据只进业务库；故意不灌「邮费/运费」条目——验收3的预期漏召回
 set -e
-mysql -uroot -proot123 ecom_cs << 'EOF'
+mysql -uroot -proot123 --default-character-set=utf8mb4 ecom_cs << 'EOF'
 INSERT INTO faq (question, answer, category) VALUES
 ('退货政策是什么', '自签收之日起7天内，商品未拆封不影响二次销售可无理由退货；拆封后质量问题30天内可退。', '售后'),
 ('退款多久到账', '退款审核通过后1-3个工作日原路退回，具体到账时间以支付平台为准。', '售后'),
