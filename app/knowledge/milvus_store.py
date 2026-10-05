@@ -10,9 +10,11 @@ class MilvusStore:
         self._client = MilvusClient(uri)
         self.collection = collection
         self.dim = dim
+        self._ensured = False
 
     def ensure_collection(self) -> None:
-        if self._client.has_collection(self.collection):
+        if self._ensured or self._client.has_collection(self.collection):
+            self._ensured = True
             return
         schema = self._client.create_schema(auto_id=False)
         schema.add_field("id", DataType.INT64, is_primary=True)
@@ -33,6 +35,7 @@ class MilvusStore:
         if self._client.has_collection(self.collection):
             self._client.drop_collection(self.collection)
             self._wait_gone()
+        self._ensured = False
         self.ensure_collection()
 
     def _wait_gone(self, timeout: float = 10.0) -> None:
@@ -93,3 +96,45 @@ class MilvusStore:
         return self._client.query(
             self.collection, filter="id >= 0", output_fields=["id"]
         ).__len__()
+
+
+class LazyMilvusStore:
+    """惰性包装：Milvus 未启动时应用仍可启动（在线检索/建库首次使用时才连接）。
+
+    MilvusClient 构造即建连，若在 create_app 期直接实例化，Milvus 宕机会拖死
+    整个应用（含与向量库无关的 ch01/ch02 功能）。惰性化后失败被限制在单次工具调用内，
+    由 ToolRegistry 包装为 {ok: False} 回灌。
+    """
+
+    def __init__(self, uri: str, collection: str, dim: int = 1024) -> None:
+        self._kwargs = {"uri": uri, "collection": collection, "dim": dim}
+        self._store: MilvusStore | None = None
+
+    def _get(self) -> MilvusStore:
+        if self._store is None:
+            self._store = MilvusStore(**self._kwargs)
+        return self._store
+
+    @property
+    def collection(self) -> str:
+        return self._kwargs["collection"]
+
+    def ensure_collection(self) -> None:
+        self._get().ensure_collection()
+
+    def recreate(self) -> None:
+        self._get().recreate()
+
+    def drop(self) -> None:
+        self._get().drop()
+
+    def upsert(self, rows: list[dict]) -> None:
+        self._get().upsert(rows)
+
+    def search(
+        self,
+        vector: list[float],
+        top_k: int = 3,
+        score_threshold: float | None = None,
+    ) -> list[dict]:
+        return self._get().search(vector, top_k, score_threshold)

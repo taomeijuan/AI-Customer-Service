@@ -9,7 +9,7 @@ SENTENCE_END = "。！？"
 
 @dataclass
 class Chunk:
-    """一条知识的三个向量化格 + 四类元数据。"""
+    """一条知识的三个向量化格 + 元数据（prev/next 指针由入库侧回填）。"""
 
     category: str
     questions: str
@@ -17,8 +17,6 @@ class Chunk:
     section_path: str = ""
     content_type: str = ""
     is_key_clause: int = 0
-    prev_chunk_id: int | None = None
-    next_chunk_id: int | None = None
 
 
 @dataclass
@@ -38,8 +36,31 @@ def _is_separator_row(line: str) -> bool:
     return bool(re.fullmatch(r"\|[\s:\-|]+\|", line.strip()))
 
 
+def _tail_overlap(block: str, overlap_chars: int) -> str:
+    """取上一块尾部做重叠，起点回退到「最近」的句号（不是最早的）。"""
+    tail = block[-overlap_chars:]
+    cut = max((tail.rfind(p) for p in SENTENCE_END), default=-1)
+    return tail[cut + 1 :] if cut != -1 else ""
+
+
+def _split_by_sentences(text: str, max_chars: int, overlap_chars: int) -> list[str]:
+    sentences = [s for s in re.split(r"(?<=[。！？])", text) if s.strip()]
+    blocks: list[str] = []
+    cur = ""
+    for s in sentences:
+        candidate = cur + s
+        if len(candidate) > max_chars and cur:
+            blocks.append(cur)
+            cur = _tail_overlap(cur, overlap_chars) + s
+        else:
+            cur = candidate
+    if cur:
+        blocks.append(cur)
+    return blocks
+
+
 def _split_long_text(text: str, max_chars: int, overlap_chars: int) -> list[str]:
-    """超长正文递归切：先段落（空行），再句号；块间重叠回退到最近句号。"""
+    """超长正文切分：先段落（空行），块间句号对齐重叠；单块仍超长退到句子级。"""
     if len(text) <= max_chars:
         return [text]
 
@@ -56,60 +77,66 @@ def _split_long_text(text: str, max_chars: int, overlap_chars: int) -> list[str]
                 cur = candidate
         if cur:
             blocks.append(cur)
-        if len(blocks) == 1:  # 单段落仍超长 → 退到句子级
-            blocks = _split_long_text(text, max_chars, overlap_chars)
-        return [b for blk in blocks for b in _split_long_text(blk, max_chars, overlap_chars)] if any(
-            len(b) > max_chars for b in blocks
-        ) else blocks
+        out: list[str] = []
+        prev: str | None = None
+        for b in blocks:
+            if prev is not None:
+                b = _tail_overlap(prev, overlap_chars) + b  # 段落块间也带重叠
+            out.append(b)
+            prev = b
+        result: list[str] = []
+        for b in out:
+            if len(b) > max_chars:
+                result.extend(_split_by_sentences(b, max_chars, overlap_chars))
+            else:
+                result.append(b)
+        return result
 
-    # 句子级切分
-    sentences = [s for s in re.split(r"(?<=[。！？])", text) if s.strip()]
-    blocks = []
-    cur = ""
-    for s in sentences:
-        candidate = cur + s
-        if len(candidate) > max_chars and cur:
-            blocks.append(cur)
-            # 重叠：取上一块尾部 overlap_chars，并回退到最近句号之后
-            tail = cur[-overlap_chars:]
-            cut = min((tail.rfind(p) for p in SENTENCE_END), default=-1)
-            overlap = tail[cut + 1 :] if cut != -1 else ""
-            cur = overlap + s
-        else:
-            cur = candidate
-    if cur:
-        blocks.append(cur)
-    return blocks
+    return _split_by_sentences(text, max_chars, overlap_chars)
 
 
-def _emit_section(sec: _Section, max_chars: int, overlap_chars: int, table_rows: int) -> list[Chunk]:
-    """一个 section → chunk 列表：普通文本块 / 表格块（带表头）。"""
+def _emit_section(
+    sec: _Section, max_chars: int, overlap_chars: int, table_rows: int
+) -> list[Chunk]:
+    """一个 section → chunk 列表。按原行序产出：表格连续行成块组（每块复制表头），表格间文本先行。"""
     chunks: list[Chunk] = []
-    category = ">".join(sec.path)
-    section_path = "/".join([*sec.path, sec.title])  # 全路径含本节标题，溯源用
     base = {
-        "category": category,
+        "category": ">".join(sec.path),
         "questions": sec.title,
-        "section_path": section_path,
+        "section_path": "/".join([*sec.path, sec.title]),
     }
 
-    # 表格行（连续 | 行）单独成块组；其余文本走普通切分
-    table_lines: list[str] = []
-    text_lines: list[str] = []
-    for line in sec.lines:
-        (table_lines if _is_table_line(line) else text_lines).append(line)
+    def emit_text(lines: list[str]) -> None:
+        text = "\n".join(lines).strip()
+        if not text:
+            return
+        for piece in _split_long_text(text, max_chars, overlap_chars):
+            chunks.append(Chunk(answer=piece, **base))
 
-    if table_lines:
+    def flush_table(table_lines: list[str]) -> None:
         header = next((ln for ln in table_lines if not _is_separator_row(ln)), table_lines[0])
         data_rows = [ln for ln in table_lines if ln is not header and not _is_separator_row(ln)]
         for i in range(0, len(data_rows), table_rows):
-            body = "\n".join([header] + data_rows[i : i + table_rows])
-            chunks.append(Chunk(answer=body, **base))
+            chunks.append(
+                Chunk(answer="\n".join([header] + data_rows[i : i + table_rows]), **base)
+            )
 
-    text = "\n".join(text_lines).strip()
-    if text:
-        for piece in _split_long_text(text, max_chars, overlap_chars):
-            chunks.append(Chunk(answer=piece, **base))
+    text_buf: list[str] = []
+    table_buf: list[str] = []
+    for line in sec.lines:
+        if _is_table_line(line):
+            if text_buf:  # 表格前累积的说明文字先行成块
+                emit_text(text_buf)
+                text_buf = []
+            table_buf.append(line)
+        else:
+            if table_buf:  # 表格连续行结束 → 成组产出（每张表各自识别表头）
+                flush_table(table_buf)
+                table_buf = []
+            text_buf.append(line)
+    if table_buf:
+        flush_table(table_buf)
+    emit_text(text_buf)
 
     for c in chunks:
         c.is_key_clause = int(any(kw in c.answer for kw in KEY_CLAUSE_KEYWORDS))

@@ -13,7 +13,7 @@ from app.db.engine import build_engine
 from app.extraction.schemas import AfterSalesExtraction
 from app.extraction.service import ExtractionService, build_structured_model
 from app.knowledge.embedder import build_embedder
-from app.knowledge.milvus_store import MilvusStore
+from app.knowledge.milvus_store import LazyMilvusStore
 from app.tools.base import ToolRegistry
 from app.tools.ecommerce import query_logistics, query_order, query_product
 from app.tools.faq import build_query_faq_tool
@@ -46,7 +46,7 @@ def create_app() -> FastAPI:
     app.state.settings = settings
     app.state.engine, app.state.session_factory = build_engine(settings)
     app.state.embedder = build_embedder(settings)
-    app.state.milvus_store = MilvusStore(
+    app.state.milvus_store = LazyMilvusStore(
         uri=settings.milvus_uri, collection=settings.milvus_collection
     )
 

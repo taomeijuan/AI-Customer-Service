@@ -25,9 +25,6 @@ class FakeMilvus:
             self.rows[r["id"]] = r
 
 
-SETTINGS_STUB = type("S", (), {"retrieval_score_threshold": 0.45, "retrieval_top_k": 3})()
-
-
 @pytest.fixture
 def repo(db_session):
     return KnowledgeRepo(db_session)
@@ -39,7 +36,7 @@ async def test_ingest_backfills_vector_id(repo, db_session):
         [{"category": "c", "questions": "q", "answer": "a", "content_type": "policy"}]
     )
     milvus = FakeMilvus()
-    done = await ingest_pending(repo, FakeEmbedder(), milvus, SETTINGS_STUB)
+    done = await ingest_pending(repo, FakeEmbedder(), milvus)
     assert done == 1
     k = await repo.get(ids[0])
     assert k.vectorize_status == "done"
@@ -47,8 +44,24 @@ async def test_ingest_backfills_vector_id(repo, db_session):
     assert milvus.rows[ids[0]]["questions"] == "q"  # 向量化文本外，Milvus 副本可检索
 
 
+async def test_resume_after_milvus_written_before_backfill(repo, db_session):
+    """评审 Minor#12①：Milvus 已写入但 MySQL 未回填的分支——重跑 upsert 同 id 覆盖补齐。"""
+    ids = await repo.upsert_chunks(
+        [{"category": "c", "questions": "q", "answer": "a", "content_type": "policy"}]
+    )
+    milvus = FakeMilvus()
+    milvus.upsert([{"id": ids[0], "vector": [0.0], "questions": "q", "answer": "a",
+                    "category": "c", "content_type": "policy"}])  # 模拟：Milvus 已写
+    k = await repo.get(ids[0])
+    assert k.vectorize_status == "pending"  # 但 MySQL 未回填（中断点）
+    done = await ingest_pending(repo, FakeEmbedder(), milvus)
+    assert done == 1
+    k = await repo.get(ids[0])
+    assert k.vectorize_status == "done" and k.vector_id == str(ids[0])
+
+
 async def test_resume_picks_up_pending(repo):
-    """中断重跑：第一次 embed 后崩（Milvus 已写部分），重跑补齐。"""
+    """中断重跑：第一次 embed 后崩（Milvus 未写），重跑补齐。"""
     await repo.upsert_chunks(
         [
             {"category": "c", "questions": "q1", "answer": "a1", "content_type": "policy"},
@@ -57,9 +70,9 @@ async def test_resume_picks_up_pending(repo):
     )
     milvus = FakeMilvus()
     with pytest.raises(RuntimeError):
-        await ingest_pending(repo, FakeEmbedder(fail_first=1), milvus, SETTINGS_STUB)
+        await ingest_pending(repo, FakeEmbedder(fail_first=1), milvus)
     assert milvus.rows == {}  # 第一批即崩，什么都没写
-    done = await ingest_pending(repo, FakeEmbedder(), milvus, SETTINGS_STUB)
+    done = await ingest_pending(repo, FakeEmbedder(), milvus)
     assert done == 2  # 重跑全部补齐
 
 

@@ -61,25 +61,33 @@ class MessagesRepo:
             )
         await self._session.commit()
 
-    async def load_dialog_pairs(self) -> list[tuple[str, str]]:
-        """全部会话的 (用户问, 客服答) 配对，供离线挖知识。
+    async def load_dialog_pairs(self) -> dict[int, list[tuple[str, str]]]:
+        """全部会话的 (用户问, 客服答) 配对，按会话分组，供离线挖知识。
 
         跳过 tool 消息与工具申请行；中间带 tool_calls 的 assistant 不截断配对，
-        等最终带正文的 assistant 才成对。
+        等最终带正文的 assistant 才成对。按会话分组避免「A 会话末尾未回复的
+        user 消息」与「B 会话开头的 assistant 回复」错配成假问答对。
         """
-        result = await self._session.execute(select(Message).order_by(Message.id))
+        result = await self._session.execute(
+            select(Message).order_by(Message.conversation_id, Message.id)
+        )
         rows = result.scalars().all()
-        pairs: list[tuple[str, str]] = []
+        grouped: dict[int, list[tuple[str, str]]] = {}
         pending_user: str | None = None
+        current_cid: int | None = None
         for row in rows:
+            if row.conversation_id != current_cid:  # 换会话：未回复的 pending 作废
+                current_cid = row.conversation_id
+                pending_user = None
+                grouped.setdefault(current_cid, [])
             if row.role == "user":
                 pending_user = row.content
             elif row.role == "assistant":
                 if pending_user and row.content and not row.tool_calls:
-                    pairs.append((pending_user, row.content))
+                    grouped[current_cid].append((pending_user, row.content))
                     pending_user = None
             # tool 结果与工具申请行不打断配对
-        return pairs
+        return grouped
 
     async def load_history(self, conversation_id: int) -> list[BaseMessage]:
         """按序重建 BaseMessage 列表；assistant 行的 tool_calls JSON 还原为申请单。"""

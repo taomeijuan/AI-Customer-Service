@@ -10,11 +10,14 @@ EXTRACTION_PROMPT = (
 )
 
 
-def build_structured_model(model: Any) -> Any:
+def build_structured_model(model: Any, schema: Any = None) -> Any:
     """method=function_calling：DeepSeek 等兼容上游不支持 json_schema response_format，
-    官方支持 function calling（Context7 双向核对 2026-09-30，用户拍板）。"""
+    官方支持 function calling（Context7 双向核对 2026-09-30，用户拍板）。
+
+    include_raw=True → 返回 {"raw", "parsed", "parsing_error"}，调用方需判 parsing_error。
+    """
     return model.with_structured_output(
-        AfterSalesExtraction, include_raw=True, method="function_calling"
+        schema or AfterSalesExtraction, include_raw=True, method="function_calling"
     )
 
 

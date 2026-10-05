@@ -3,23 +3,23 @@ from langchain.messages import AIMessage, HumanMessage
 from sqlalchemy import select
 
 from app.db.models import Conversation, KnowledgeChunk, Message, QaExtractionStaging
-from app.jobs.mine_qa import mine_qa
+from app.jobs.mine_qa import QaExtraction, mine_qa
 
 
 class FakeLLM:
-    """按批返回抽取结果。"""
+    """按批返回抽取结果（include_raw 形态，模拟 with_structured_output(include_raw=True)）。"""
 
     def __init__(self, batches):
         self.batches = list(batches)
-        self.seen_pairs = []
+        self.seen = []
 
     def with_structured_output(self, schema, **kwargs):
+        assert kwargs.get("method") == "function_calling"  # 评审 B1 回归钉死
         return self
 
     async def ainvoke(self, messages):
-        # messages 里含本批对话对文本，这里直接按序吐脚本
-        self.seen_pairs.append(messages)
-        return {"qa": self.batches.pop(0)}
+        self.seen.append(messages)
+        return {"raw": None, "parsed": QaExtraction(qa=self.batches.pop(0)), "parsing_error": None}
 
 
 class FakeEmbedder:
@@ -34,14 +34,8 @@ class FakeMilvus:
         pass
 
 
-def _settings_stub():
-    return type(
-        "S", (), {"mine_batch_size": 10, "retrieval_score_threshold": 0.45, "retrieval_top_k": 3}
-    )()
-
-
 @pytest.fixture
-async def dialog_session(session_factory, db_session):
+async def dialog_cid(session_factory, db_session):
     """一段历史会话：两条 QA 对（邮费 + 发票）。"""
     async with session_factory() as s:
         c = Conversation(user_id="miner")
@@ -60,7 +54,7 @@ async def dialog_session(session_factory, db_session):
 
 
 @pytest.mark.usefixtures("db_session")
-async def test_mine_stages_then_dedup_and_persists(session_factory, db_session, dialog_session):
+async def test_mine_stages_then_dedup_and_persists(session_factory, db_session, dialog_cid):
     llm = FakeLLM(
         batches=[
             [
@@ -70,11 +64,7 @@ async def test_mine_stages_then_dedup_and_persists(session_factory, db_session, 
         ]
     )
     stats = await mine_qa(
-        session_factory=session_factory,
-        llm=llm,
-        embedder=FakeEmbedder(),
-        milvus=FakeMilvus(),
-        settings=_settings_stub(),
+        session_factory=session_factory, llm=llm, embedder=FakeEmbedder(), milvus=FakeMilvus()
     )
     assert stats["extracted"] == 2 and stats["kept"] == 2
     assert stats["vectorized"] == 2  # 入库后立即补向量化
@@ -83,6 +73,7 @@ async def test_mine_stages_then_dedup_and_persists(session_factory, db_session, 
     ).scalars().all()
     assert [r.status for r in rows] == ["kept", "kept"]
     assert all(r.batch_no.startswith("mine-") for r in rows)
+    assert all(r.source_ref == str(dialog_cid) for r in rows)  # 溯源=会话 id
     # kept 进了知识库并已向量化
     chunks = (
         await db_session.execute(select(KnowledgeChunk))
@@ -91,7 +82,7 @@ async def test_mine_stages_then_dedup_and_persists(session_factory, db_session, 
 
 
 @pytest.mark.usefixtures("db_session")
-async def test_exact_duplicate_discarded(session_factory, db_session, dialog_session):
+async def test_exact_duplicate_discarded(session_factory, db_session, dialog_cid):
     # 库里已有完全相同的知识
     db_session.add(
         KnowledgeChunk(
@@ -108,17 +99,13 @@ async def test_exact_duplicate_discarded(session_factory, db_session, dialog_ses
         ]
     )
     stats = await mine_qa(
-        session_factory=session_factory,
-        llm=llm,
-        embedder=FakeEmbedder(),
-        milvus=FakeMilvus(),
-        settings=_settings_stub(),
+        session_factory=session_factory, llm=llm, embedder=FakeEmbedder(), milvus=FakeMilvus()
     )
     assert stats["extracted"] == 2 and stats["discarded"] == 1 and stats["kept"] == 1
 
 
 @pytest.mark.usefixtures("db_session")
-async def test_vector_near_duplicate_discarded(session_factory, db_session, dialog_session):
+async def test_vector_near_duplicate_discarded(session_factory, db_session, dialog_cid):
     # 库里已有一条"邮费"知识（FakeEmbedder 同关键词同向量 → 相似度 1.0 > 0.95）
     db_session.add(
         KnowledgeChunk(category="对话挖掘", questions="邮费政策", answer="满99包邮")
@@ -133,10 +120,6 @@ async def test_vector_near_duplicate_discarded(session_factory, db_session, dial
         ]
     )
     stats = await mine_qa(
-        session_factory=session_factory,
-        llm=llm,
-        embedder=FakeEmbedder(),
-        milvus=FakeMilvus(),
-        settings=_settings_stub(),
+        session_factory=session_factory, llm=llm, embedder=FakeEmbedder(), milvus=FakeMilvus()
     )
     assert stats["discarded"] == 1 and stats["kept"] == 1
