@@ -44,6 +44,17 @@
   header h1 { font-size: 17px; font-weight: 600; }
   header .status { font-size: 12px; opacity: .85; display: flex; align-items: center; gap: 5px; margin-top: 2px; }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: #b9f6ca; box-shadow: 0 0 4px #b9f6ca; }
+  header .new-chat {
+    margin-left: auto;
+    background: rgba(255,255,255,.18);
+    border: 1px solid rgba(255,255,255,.5);
+    color: #fff;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  header .new-chat:hover { background: rgba(255,255,255,.3); }
   #chat {
     flex: 1;
     overflow-y: auto;
@@ -71,6 +82,19 @@
   .bubble code { background: rgba(0,0,0,.06); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
   .row.user .bubble code { background: rgba(255,255,255,.2); }
   .bubble.error { background: #fff1f0; color: #cf1322; border: 1px solid #ffccc7; }
+  .tools { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11.5px;
+    background: var(--brand-soft);
+    color: #d84315;
+    border: 1px solid #ffd0bf;
+    border-radius: 999px;
+    padding: 2px 9px;
+  }
+  .chip.running { animation: pulse 1s infinite; }
+  .chip.fail { background: #fff1f0; color: #cf1322; border-color: #ffccc7; }
+  @keyframes pulse { 50% { opacity: .45; } }
   .typing { display: inline-flex; gap: 4px; padding: 4px 2px; }
   .typing i {
     width: 6px; height: 6px; border-radius: 50%;
@@ -123,12 +147,13 @@
     <h1>商城小助手</h1>
     <div class="status"><span class="dot"></span><span id="statusText">在线 · 为你服务</span></div>
   </div>
+  <button class="new-chat" id="newChat">新会话</button>
 </header>
 
 <div id="chat">
   <div class="row bot">
     <div class="avatar">🛍️</div>
-    <div class="bubble">你好呀～我是商城小助手，商品、订单、售后问题都可以问我 😊</div>
+    <div class="bubble">你好呀～我是商城小助手，可以查订单、物流、商品，也能答售后政策。问点什么？😊</div>
   </div>
 </div>
 
@@ -136,14 +161,24 @@
   <textarea id="input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
   <button id="send">发送</button>
 </footer>
-<div class="hint">ch01 · 对话由 AI 生成，订单与退款等实时信息以商城页面为准</div>
+<div class="hint">ch02 · 工具数据为演示造数；对话与工单已落库</div>
 
 <script>
 const chat = document.getElementById('chat');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('send');
 const statusText = document.getElementById('statusText');
-let conversationId = null;
+const newChatBtn = document.getElementById('newChat');
+
+// ── 会话与用户身份（localStorage，DB 为真源，刷新/重开都续上）──
+const uidKey = 'cs_user_id_v1', convKey = 'cs_conversation_id_v2';
+let userId = localStorage.getItem(uidKey);
+if (!userId) {
+  userId = crypto.randomUUID();
+  localStorage.setItem(uidKey, userId);
+}
+let conversationId = JSON.parse(localStorage.getItem(convKey) || 'null');
+
 let streaming = false;
 
 function scrollBottom() { chat.scrollTop = chat.scrollHeight; }
@@ -154,6 +189,7 @@ function addRow(role) {
   row.innerHTML = `<div class="avatar">${role === 'bot' ? '🛍️' : '🙋'}</div>`;
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
+  bubble.innerHTML = '<div class="tools"></div><div class="text"></div>';
   row.appendChild(bubble);
   chat.appendChild(row);
   scrollBottom();
@@ -169,6 +205,15 @@ function renderMd(el, text) {
     .replace(/\n/g, '<br>');
 }
 
+function addToolChip(bubble, name, running) {
+  const chips = bubble.querySelector('.tools');
+  const chip = document.createElement('span');
+  chip.className = 'chip' + (running ? ' running' : '');
+  chip.innerHTML = `🔧 <b>${name}</b> · ${running ? '查询中' : '完成'}`;
+  chips.appendChild(chip);
+  return chip;
+}
+
 function setBusy(b) {
   streaming = b;
   sendBtn.disabled = b;
@@ -182,26 +227,28 @@ async function send() {
   input.value = '';
   input.style.height = 'auto';
 
-  addRow('user').textContent = message;
+  addRow('user').querySelector('.text').textContent = message;
   const botBubble = addRow('bot');
-  botBubble.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
+  botBubble.querySelector('.text').innerHTML =
+    '<span class="typing"><i></i><i></i><i></i></span>';
   setBusy(true);
 
   try {
     const resp = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conversation_id: conversationId, message }),
+      body: JSON.stringify({ conversation_id: conversationId, message, user_id: userId }),
     });
-    if (resp.status === 404) {  // 会话过期：服务端已失忆，重开再试
+    if (resp.status === 404) {  // 会话过期：清掉本地 id 重开
       conversationId = null;
+      localStorage.removeItem(convKey);
       throw new Error('会话已过期，请重新发送');
     }
     if (!resp.ok || !resp.body) throw new Error(`服务异常（HTTP ${resp.status}）`);
 
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
-    let buffer = '', firstToken = true;
+    let buffer = '', firstToken = true, textEl = botBubble.querySelector('.text');
 
     while (true) {
       const { done, value } = await reader.read();
@@ -219,31 +266,55 @@ async function send() {
         const payload = JSON.parse(data);
         if (event === 'meta') {
           conversationId = payload.conversation_id;
+          localStorage.setItem(convKey, JSON.stringify(conversationId));
+        } else if (event === 'tool') {
+          if (payload.status === 'running') {
+            addToolChip(botBubble, payload.tool, true);
+            statusText.textContent = `正在调用 ${payload.tool}…`;
+          } else {
+            const chips = botBubble.querySelectorAll('.chip.running');
+            const chip = chips[chips.length - 1];
+            if (chip) {
+              chip.classList.remove('running');
+              chip.innerHTML = `🔧 <b>${payload.tool}</b> · ${payload.ok ? '完成' : '失败'}`;
+              if (!payload.ok) chip.classList.add('fail');
+            }
+          }
+          scrollBottom();
         } else if (event === 'delta') {
-          if (firstToken) { botBubble.textContent = ''; firstToken = false; }
-          renderMd(botBubble, (botBubble.dataset.raw || '') + payload.text);
-          botBubble.dataset.raw = (botBubble.dataset.raw || '') + payload.text;
+          if (firstToken) { textEl.textContent = ''; firstToken = false; }
+          const raw = (textEl.dataset.raw || '') + payload.text;
+          textEl.dataset.raw = raw;
+          renderMd(textEl, raw);
           scrollBottom();
         } else if (event === 'error') {
-          botBubble.textContent = '';
+          textEl.textContent = '';
           botBubble.classList.add('error');
-          renderMd(botBubble, payload.message || '服务暂时不可用');
+          renderMd(textEl, payload.message || '服务暂时不可用');
         } else if (event === 'done') {
-          delete botBubble.dataset.raw;
+          delete textEl.dataset.raw;
         }
       }
     }
   } catch (err) {
-    if (botBubble.querySelector('.typing')) botBubble.textContent = '';
+    const textEl = botBubble.querySelector('.text');
+    if (textEl.querySelector('.typing')) textEl.textContent = '';
     botBubble.classList.add('error');
-    botBubble.textContent = `⚠️ ${err.message || '网络异常，请稍后重试'}`;
+    textEl.textContent = `⚠️ ${err.message || '网络异常，请稍后重试'}`;
   } finally {
-    delete botBubble.dataset.raw;
     setBusy(false);
+    statusText.textContent = '在线 · 为你服务';
     input.focus();
     scrollBottom();
   }
 }
+
+newChatBtn.addEventListener('click', () => {
+  if (streaming) return;
+  conversationId = null;
+  localStorage.removeItem(convKey);
+  location.reload();
+});
 
 sendBtn.addEventListener('click', send);
 input.addEventListener('keydown', (e) => {
