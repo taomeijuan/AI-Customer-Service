@@ -28,6 +28,7 @@ async def ingest_pending(repo, embedder, store, batch_size: int = 50) -> int:
             {
                 "id": chunk.id,
                 "vector": vec,
+                "text": _vectorize_text(chunk),
                 "questions": _bytes_truncate(chunk.questions, 2000),
                 "answer": _bytes_truncate(chunk.answer, 60000),
                 "category": _bytes_truncate(chunk.category, 500),

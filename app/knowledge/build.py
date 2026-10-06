@@ -61,7 +61,7 @@ async def build(knowledge_dir: Path = KNOWLEDGE_DIR) -> dict:
                 stats["files"] += 1
                 stats["chunks"] += len(ids)
                 _ = before
-            stats["vectorized"] = await ingest_pending(repo, embedder, store, settings)
+            stats["vectorized"] = await ingest_pending(repo, embedder, store)
     finally:
         await engine.dispose()
     logger.info("build finished: %s", stats)
