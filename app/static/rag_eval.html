@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAG 评估 · 四策略对照</title>
+<style>
+  :root {
+    --brand: #ff5722;
+    --brand-soft: #fff3ef;
+    --bg: #f4f5f7;
+    --text: #26282c;
+    --dim: #9aa0a8;
+    --ok: #2e7d32;
+    --bad: #c62828;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text); padding: 24px;
+  }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { color: var(--dim); font-size: 13px; margin-bottom: 20px; }
+  .panel { background: #fff; border-radius: 12px; padding: 16px 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  .panel h2 { font-size: 14px; margin-bottom: 12px; color: #546e7a; }
+  label { font-size: 13px; margin-right: 14px; cursor: pointer; }
+  select, button {
+    font-size: 13.5px; border: 1px solid #e3e5e8; border-radius: 8px; padding: 7px 14px;
+    background: #fff; cursor: pointer; font-family: inherit;
+  }
+  button.primary { background: var(--brand); color: #fff; border: none; font-weight: 600; }
+  button.primary:disabled { opacity: .45; cursor: not-allowed; }
+  .hint { font-size: 12px; color: var(--dim); margin-top: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { border-bottom: 1px solid #f0f0f0; padding: 7px 8px; text-align: left; }
+  th { color: var(--dim); font-weight: 600; font-size: 12px; }
+  tr.hit td { background: #f1f8e9; }
+  tr.miss td { background: #fff8f0; }
+  .num { font-variant-numeric: tabular-nums; }
+  .good { color: var(--ok); font-weight: 600; }
+  .badc { color: var(--bad); font-weight: 600; }
+  .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; margin-right: 4px; }
+  .chip.rel { background: #e3f2fd; color: #1565c0; }
+  .chip.top { background: #e8f5e9; color: var(--ok); }
+  .strategy-block { margin-bottom: 28px; }
+  .strategy-block h3 { font-size: 15px; margin-bottom: 8px; }
+  .agg { font-size: 12.5px; color: #546e7a; margin-bottom: 8px; }
+  details { margin-top: 4px; }
+  summary { cursor: pointer; font-size: 12.5px; color: #1565c0; }
+  pre { white-space: pre-wrap; font-size: 12px; background: #fafafa; padding: 6px; border-radius: 6px; }
+  .meta { font-size: 12px; color: var(--dim); margin: 8px 0; }
+  a { color: #1565c0; text-decoration: none; }
+</style>
+</head>
+<body>
+<h1>RAG 评估 · 四策略对照</h1>
+<div class="sub">检索排序（Recall@K / MRR）· 证据覆盖 · 端到端答案与忠实度 —— 数据源：<a href="/">聊天页</a> · 完整报告见 docs/evals/</div>
+
+<div class="panel">
+  <h2>评估配置</h2>
+  <div>
+    <b style="font-size:13px">策略：</b>
+    <label><input type="checkbox" class="st" value="dense" checked> dense</label>
+    <label><input type="checkbox" class="st" value="bm25" checked> bm25</label>
+    <label><input type="checkbox" class="st" value="hybrid" checked> hybrid</label>
+    <label><input type="checkbox" class="st" value="hybrid_rerank" checked> hybrid_rerank</label>
+  </div>
+  <div style="margin-top:10px">
+    <b style="font-size:13px">题数：</b>
+    <select id="limit"><option>3</option><option selected>6</option><option>10</option><option>20</option><option>30</option></select>
+    <b style="font-size:13px; margin-left:12px">桶：</b>
+    <select id="bucket">
+      <option value="">全部</option>
+      <option value="A_policy">A_policy 政策直问</option>
+      <option value="B_model">B_model 型号精确</option>
+      <option value="C_colloquial">C_colloquial 口语模糊</option>
+      <option value="E_multi">E_multi 多跳组合</option>
+    </select>
+  </div>
+  <div style="margin-top:14px">
+    <button class="primary" id="runRetrieval">跑检索对照（快，纯检索排序）</button>
+    <button id="runE2E">跑端到端（慢，含生成+忠实度裁判）</button>
+  </div>
+  <div class="hint">检索对照：embedding + Milvus，秒级。端到端：每题额外调 DeepSeek 生成 + 忠实度裁判，约 10-20 秒/题；编造个案会记入 faith_cases 台账。</div>
+  <div class="meta" id="status"></div>
+</div>
+
+<div id="output"></div>
+
+<script>
+const output = document.getElementById('output');
+const statusEl = document.getElementById('status');
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function getOpts(mode) {
+  const strategies = [...document.querySelectorAll('.st:checked')].map(x => x.value);
+  if (!strategies.length) { alert('至少勾选一个策略'); return null; }
+  return {
+    mode,
+    strategies,
+    limit: Number(document.getElementById('limit').value),
+    bucket: document.getElementById('bucket').value || null,
+  };
+}
+
+async function run(mode) {
+  const opts = getOpts(mode);
+  if (!opts) return;
+  document.querySelectorAll('button').forEach(b => b.disabled = true);
+  statusEl.textContent = `⏳ ${mode === 'e2e' ? '端到端' : '检索对照'}评估中（${opts.strategies.join(' / ')} × ${opts.limit} 题）…`;
+  output.innerHTML = '';
+  const t0 = Date.now();
+  try {
+    const resp = await fetch('/api/rag-eval/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(opts),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    render(data);
+  } catch (e) {
+    statusEl.textContent = `✗ ${e.message}`;
+  } finally {
+    document.querySelectorAll('button').forEach(b => b.disabled = false);
+    if (statusEl.textContent.startsWith('⏳')) {
+      statusEl.textContent = `✓ 完成，耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s`;
+    }
+  }
+}
+
+function markChunkIds(ids) {
+  // 相关 chunk 用蓝色 chip、被检出的前 3 名再叠绿色
+  return ids.map(id => `<span class="chip rel">${id}</span>`).join(' ');
+}
+
+function renderRanked(row) {
+  const rel = new Set(row.relevant_ids);
+  return row.ranked_ids.map((id, i) => {
+    const isRel = rel.has(id);
+    const cls = 'chip ' + (isRel ? 'top' : 'rel');
+    const style = i >= 3 && !isRel ? 'opacity:.45' : '';
+    return `<span class="${cls}" style="${style}">${i + 1}.${id}</span>`;
+  }).join(' ') || '<span class="badc">零召回</span>';
+}
+
+function render(data) {
+  let html = `<div class="meta">模式 ${esc(data.mode)} · ${data.n_questions} 题 · 耗时 ${data.elapsed_sec}s</div>`;
+  for (const [strategy, block] of Object.entries(data.results)) {
+    const agg = block.aggregate;
+    const aggCells = ['recall@3', 'recall@5', 'recall@10', 'mrr', 'faithfulness']
+      .map(k => `<td class="num">${agg[k] !== undefined ? agg[k].toFixed(3) : '-'}</td>`).join('');
+    html += `<div class="strategy-block"><h3>策略：${esc(strategy)}</h3>
+      <div class="agg">分桶均值：${Object.entries(agg).map(([b, v]) =>
+        `${b}(n=${v.n} R@3=${(v['recall@3'] ?? 0).toFixed(2)} R@5=${(v['recall@5'] ?? 0).toFixed(2)} R@10=${(v['recall@10'] ?? 0).toFixed(2)} MRR=${(v['mrr'] ?? 0).toFixed(2)}${v['faithfulness'] !== undefined ? ` Faith=${v['faithfulness'].toFixed(2)}` : ''})`).join(' · ')}</div>
+      <table><thead><tr>
+        <th>题号</th><th>桶</th><th>问题</th><th>检索排序（绿=相关块 · 蓝=干扰）</th>
+        <th>R@3</th><th>R@5</th><th>R@10</th><th>MRR</th>
+        ${data.mode === 'e2e' ? '<th>答案覆盖 / 忠实度</th>' : ''}
+      </tr></thead><tbody>`;
+    for (const row of block.rows) {
+      const hit = row['recall@5'] > 0;
+      const cls = hit ? 'hit' : 'miss';
+      let e2e = '';
+      if (data.mode === 'e2e') {
+        if (row.refused) {
+          e2e = `<span class="chip">拒答</span>${row.judge_reason ? esc(row.judge_reason).slice(0, 40) : ''}`;
+        } else {
+          const f = row.faithfulness;
+          e2e = `<details><summary>${f !== undefined ? `<span class="${f === 1 ? 'good' : 'badc'}">Faith=${f}</span>` : '未裁判'} · 引用 ${row.citations.length} 条</summary>
+            <pre>${esc(row.answer)}</pre>${row.judge_reason ? `<pre>裁判：${esc(row.judge_reason)}</pre>` : ''}</details>`;
+        }
+      }
+      html += `<tr class="${cls}">
+        <td>${esc(row.id)}</td><td>${esc(row.bucket)}</td>
+        <td style="max-width:180px">${esc(row.query)}</td>
+        <td>${renderRanked(row)}</td>
+        <td class="num ${row['recall@3'] > 0 ? 'good' : 'badc'}">${row['recall@3'].toFixed(2)}</td>
+        <td class="num ${row['recall@5'] > 0 ? 'good' : 'badc'}">${row['recall@5'].toFixed(2)}</td>
+        <td class="num ${row['recall@10'] > 0 ? 'good' : 'badc'}">${row['recall@10'].toFixed(2)}</td>
+        <td class="num">${row.mrr.toFixed(2)}</td>
+        ${data.mode === 'e2e' ? `<td>${e2e}</td>` : ''}
+      </tr>`;
+    }
+    html += '</tbody></table></div>';
+  }
+  output.innerHTML = html;
+}
+
+document.getElementById('runRetrieval').addEventListener('click', () => run('retrieval'));
+document.getElementById('runE2E').addEventListener('click', () => run('e2e'));
+</script>
+</body>
+</html>

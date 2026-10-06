@@ -7,12 +7,14 @@ from fastapi.staticfiles import StaticFiles
 from app.agents.orchestrator import Orchestrator
 from app.api.chat import router as chat_router
 from app.api.extract import router as extract_router
+from app.api.rag_eval import router as rag_eval_router
 from app.core.config import get_settings
 from app.core.llm import get_chat_model
 from app.db.engine import build_engine
 from app.extraction.schemas import AfterSalesExtraction
 from app.extraction.service import ExtractionService, build_structured_model
 from app.generation.answerer import AnswerSchema, Answerer
+from fastapi.responses import FileResponse
 from app.knowledge.embedder import build_embedder
 from app.knowledge.query_rewriter import LangChainRewriter
 from app.knowledge.reranker import build_reranker
@@ -93,8 +95,13 @@ def create_app() -> FastAPI:
     async def healthz() -> dict:
         return {"status": "ok"}
 
+    @app.get("/rag-eval", include_in_schema=False)
+    async def rag_eval_page() -> FileResponse:
+        return FileResponse(STATIC_DIR / "rag_eval.html")
+
     app.include_router(chat_router)
     app.include_router(extract_router)
+    app.include_router(rag_eval_router)
     app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
     return app
 
