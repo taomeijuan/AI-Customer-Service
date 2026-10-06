@@ -47,10 +47,14 @@ def assemble_blocks(evidences: list[Evidence]) -> list[str]:
 
 
 class Answerer:
-    """生成回答：证据组装 → 自评 → 带角标回答或拒答。"""
+    """生成回答：证据组装 → 自评 → 带角标回答或拒答。
 
-    def __init__(self, llm: Any) -> None:
-        self._structured = build_structured_model(llm, AnswerSchema)
+    structured_model: llm.with_structured_output(AnswerSchema, include_raw=True,
+    method="function_calling")——用 build_structured_model(llm, AnswerSchema) 构建。
+    """
+
+    def __init__(self, structured_model: Any) -> None:
+        self._structured = structured_model
 
     async def answer(self, query: str, evidences: list[Evidence]) -> AnswerOutcome:
         blocks = assemble_blocks(evidences)

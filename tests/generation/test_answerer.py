@@ -13,17 +13,21 @@ def test_first_and_last_placement():
     """最相关放首尾，中间按序：利用 LLM 首尾注意力。"""
     evs = [make_ev(1), make_ev(2), make_ev(3), make_ev(4), make_ev(5)]  # rank1 最相关
     blocks = assemble_blocks(evs)
-    assert blocks[0].startswith("[1]") and "知识内容1" in blocks[0]
-    assert blocks[-1].startswith("[2]") and "知识内容2" in blocks[-1]  # 次相关垫底
-    assert [b.split("]")[0] + "]" for b in blocks] == ["[1]", "[3]", "[4]", "[5]", "[2]"]
+    assert "知识内容1" in blocks[0]  # 最相关在首位
+    assert "知识内容2" in blocks[-1]  # 次相关垫底（编号仍连续 [1..5]，内容顺序才体现首尾放置）
+    import re
+    contents = [re.search(r"[)）](知识内容\d)", b).group(1) for b in blocks]
+    assert contents == ["知识内容1", "知识内容3", "知识内容4", "知识内容5", "知识内容2"]
 
 
 class FakeStructured:
-    def __init__(self, parsed):
-        self.parsed = parsed
+    """直接模拟 with_structured_output(include_raw=True) 的返回 dict。"""
+
+    def __init__(self, result):
+        self.result = result
 
     async def ainvoke(self, messages):
-        return {"raw": None, "parsed": self.parsed, "parsing_error": None}
+        return self.result
 
 
 class Out:
@@ -35,7 +39,7 @@ class Out:
 
 async def test_useful_true_returns_cited_answer():
     llm_out = Out(True, "知识足够", "退款[1]通常1-3个工作日[2]原路退回")
-    a = Answerer(FakeStructured(llm_out))
+    a = Answerer(FakeStructured({"raw": None, "parsed": llm_out, "parsing_error": None}))
     outcome = await a.answer("退款多久到账", [make_ev(1), make_ev(2)])
     assert outcome.useful is True
     assert outcome.answer.startswith("退款[1]")
@@ -45,7 +49,7 @@ async def test_useful_true_returns_cited_answer():
 
 async def test_useful_false_flags_refusal():
     llm_out = Out(False, "知识库里没有量子速递的内容", "这个问题我这边暂时答不了")
-    a = Answerer(FakeStructured(llm_out))
+    a = Answerer(FakeStructured({"raw": None, "parsed": llm_out, "parsing_error": None}))
     outcome = await a.answer("量子速递多久到", [make_ev(1)])
     assert outcome.useful is False
     assert outcome.low_confidence is True  # 生成自评不足 → 入池信号
@@ -58,6 +62,6 @@ def test_negative_knowledge_in_prompt():
 
 
 async def test_parsing_error_treated_as_low_confidence():
-    a = Answerer(FakeStructured({"raw": "x", "parsed": None, "parsing_error": "boom"}))
+    a = Answerer(FakeStructured({"raw": "x", "parsed": None, "parsing_error": "boom"}))  # 原样返回
     outcome = await a.answer("问题", [make_ev(1)])
     assert outcome.useful is False and outcome.low_confidence is True
