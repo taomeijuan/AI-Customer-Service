@@ -112,6 +112,15 @@ async def run_all(strategies: list[str]) -> dict:
         settings=settings,
     )
     answerer = Answerer(build_structured_model(model, AnswerSchema))
+    # 评估口径：检索 Top-10（生成仍取前 3 组装），否则 recall@5/10 无区分度
+    eval_retriever_settings = type("S", (), {**{a: getattr(settings, a) for a in dir(settings) if not a.startswith("_")}, "retrieval_top_k": 10})()
+    retriever = HybridRetriever(
+        milvus=milvus,
+        embedder=embedder,
+        rewriter=LangChainRewriter(model),
+        reranker=build_reranker(settings),
+        settings=eval_retriever_settings,
+    )
     judge = FaithfulnessJudge(model, FaithCasesRepoAdapter(session_factory), judge_model=settings.llm_model)
     deps = {"retriever": retriever, "answerer": answerer, "judge": judge,
             "low_repo": LowConfidenceRepoAdapter(session_factory)}

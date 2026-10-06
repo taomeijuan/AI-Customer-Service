@@ -63,7 +63,7 @@ class FakeReranker:
     def __init__(self):
         self.called = False
 
-    def rerank(self, query, evidences, top_n):
+    async def rerank(self, query, evidences, top_n):  # 与真实 Reranker 同为 async
         self.called = True
         out = []
         for i, e in enumerate(evidences[:top_n]):
@@ -130,7 +130,7 @@ async def test_category_prefix_filter_passed_down():
 
 async def test_low_confidence_flag_when_all_scores_low():
     class LowScoreReranker(FakeReranker):
-        def rerank(self, query, evidences, top_n):
+        async def rerank(self, query, evidences, top_n):
             self.called = True
             for e in evidences[:top_n]:
                 e.score = 0.001  # 精排分低于阈值

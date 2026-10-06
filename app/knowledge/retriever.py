@@ -75,7 +75,8 @@ class HybridRetriever:
         ]
 
         if strategy == "hybrid_rerank" and self._reranker is not None and evidences:
-            evidences = await asyncio_to_thread_rerank(self._reranker, query, evidences, self._settings.rerank_top_n)
+            # Reranker.rerank 是 async（httpx.AsyncClient），直接 await
+            evidences = await self._reranker.rerank(query, evidences, self._settings.rerank_top_n)
 
         # 置信度语义按策略区分：rerank relevance_score 与 dense COSINE 是 0-1 可比阈值；
         # RRF/BM25 分数不是置信度，无可比阈值时不判低置信。
@@ -87,10 +88,3 @@ class HybridRetriever:
         else:
             low_confidence = not evidences
         return RetrievalResult(evidences=evidences, low_confidence=low_confidence)
-
-
-async def asyncio_to_thread_rerank(reranker: Reranker, query: str, evidences: list[Evidence], top_n: int) -> list[Evidence]:
-    """rerank 是同步 HTTP 客户端：丢线程池避免阻塞事件循环。"""
-    import asyncio
-
-    return await asyncio.to_thread(reranker.rerank, query, evidences, top_n)
