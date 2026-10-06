@@ -1,0 +1,32 @@
+{"id": "A01", "bucket": "A_policy", "query": "退货政策是什么", "ground_truth_points": ["7天无理由", "质量问题30天"], "relevant_chunk_ids": [1, 6, 21]}
+{"id": "A02", "bucket": "A_policy", "query": "退款多久能到账", "ground_truth_points": ["1-3个工作日", "原路退回"], "relevant_chunk_ids": [5, 6, 19]}
+{"id": "A03", "bucket": "A_policy", "query": "邮费怎么算", "ground_truth_points": ["满99包邮", "8元"], "relevant_chunk_ids": [8, 20, 29]}
+{"id": "A04", "bucket": "A_policy", "query": "退货运费谁承担", "ground_truth_points": ["质量问题平台承担", "非质量问题买家承担"], "relevant_chunk_ids": [9, 30]}
+{"id": "A05", "bucket": "A_policy", "query": "换货的流程是怎样的", "ground_truth_points": ["申请换货", "寄回验收", "运费平台承担"], "relevant_chunk_ids": [10]}
+{"id": "A06", "bucket": "A_policy", "query": "发票怎么开", "ground_truth_points": ["订单详情页", "电子发票", "1个工作日"], "relevant_chunk_ids": [15]}
+{"id": "A07", "bucket": "A_policy", "query": "现货一般多久发货", "ground_truth_points": ["48小时"], "relevant_chunk_ids": [14, 16, 37]}
+{"id": "A08", "bucket": "A_policy", "query": "哪些商品不支持无理由退货", "ground_truth_points": ["生鲜", "贴身衣物", "定制"], "relevant_chunk_ids": [1]}
+{"id": "A09", "bucket": "A_policy", "query": "退款是原路退回吗", "ground_truth_points": ["原路退回", "优惠券"], "relevant_chunk_ids": [7]}
+{"id": "A10", "bucket": "A_policy", "query": "质量问题退货时限是多久", "ground_truth_points": ["30天", "凭证"], "relevant_chunk_ids": [1, 39]}
+{"id": "B01", "bucket": "B_model", "query": "空气炸锅 AF-102 的预约定时怎么弄", "ground_truth_points": ["预约键", "12小时"], "relevant_chunk_ids": [40]}
+{"id": "B02", "bucket": "B_model", "query": "耳机 EB-55 能连电脑吗", "ground_truth_points": ["USB 接收器", "蓝牙"], "relevant_chunk_ids": [41]}
+{"id": "B03", "bucket": "B_model", "query": "AF-102 支持几段预设菜单", "ground_truth_points": ["8段"], "relevant_chunk_ids": [40]}
+{"id": "B04", "bucket": "B_model", "query": "EB-55 的配套配件有什么", "ground_truth_points": ["USB 接收器"], "relevant_chunk_ids": [41]}
+{"id": "B05", "bucket": "B_model", "query": "AF-102 型号的空气炸锅内胆能水洗吗", "ground_truth_points": ["内胆可以", "主机不可以"], "relevant_chunk_ids": [11, 40]}
+{"id": "B06", "bucket": "B_model", "query": "想查一下 EB-55 这个型号耳机的连接方式", "ground_truth_points": ["蓝牙", "接收器"], "relevant_chunk_ids": [12, 41]}
+{"id": "C01", "bucket": "C_colloquial", "query": "东西坏了我好气啊咋办", "ground_truth_points": ["质量问题", "30天", "免费退换"], "relevant_chunk_ids": [2, 18, 39]}
+{"id": "C02", "bucket": "C_colloquial", "query": "我的钱啥时候回来呀", "ground_truth_points": ["1-3个工作日"], "relevant_chunk_ids": [5, 19]}
+{"id": "C03", "bucket": "C_colloquial", "query": "不想用了想退掉行不行", "ground_truth_points": ["7天无理由"], "relevant_chunk_ids": [6, 21, 34]}
+{"id": "C04", "bucket": "C_colloquial", "query": "会不会白花邮费钱啊", "ground_truth_points": ["满99包邮", "8元"], "relevant_chunk_ids": [8, 35]}
+{"id": "C05", "bucket": "C_colloquial", "query": "那个炸锅的锅里能用水冲不", "ground_truth_points": ["内胆可以", "主机不可以"], "relevant_chunk_ids": [11]}
+{"id": "C06", "bucket": "C_colloquial", "query": "下订单了啥时候能给我寄过来", "ground_truth_points": ["48小时", "发货"], "relevant_chunk_ids": [14, 16, 37]}
+{"id": "C07", "bucket": "C_colloquial", "query": "运费是不是还得我自己掏腰包", "ground_truth_points": ["质量问题平台", "无理由买家"], "relevant_chunk_ids": [9, 36]}
+{"id": "C08", "bucket": "C_colloquial", "query": "杯子能倒可乐进去不", "ground_truth_points": ["不建议", "碳酸"], "relevant_chunk_ids": [13]}
+{"id": "E01", "bucket": "E_multi", "query": "买的耳机一个声道没声音，退货要自己出运费吗", "ground_truth_points": ["质量问题", "平台承担"], "relevant_chunk_ids": [2, 9]}
+{"id": "E02", "bucket": "E_multi", "query": "空气炸锅还没发货我想退，符合无理由的条件吗", "ground_truth_points": ["未拆封", "7天"], "relevant_chunk_ids": [6, 34, 14]}
+{"id": "E03", "bucket": "E_multi", "query": "退款到账慢和发票开具时间谁更久", "ground_truth_points": ["1-3个工作日", "1个工作日"], "relevant_chunk_ids": [5, 15]}
+{"id": "E04", "bucket": "E_multi", "query": "临期的保温杯拆封用了还能退吗", "ground_truth_points": ["不支持", "特殊商品"], "relevant_chunk_ids": [1, 2, 13]}
+{"id": "E05", "bucket": "E_multi", "query": "质量问题换货运费和退款到账时间都说明一下", "ground_truth_points": ["平台承担", "1-3个工作日"], "relevant_chunk_ids": [2, 5, 10]}
+{"id": "E06", "bucket": "E_multi", "query": "AF-102 还没发货，预售是多久", "ground_truth_points": ["页面标注", "48小时现货"], "relevant_chunk_ids": [14, 40]}
+{"id": "N01", "bucket": "A_policy", "query": "量子速递什么时候发明出来的", "expected_refusal": true}
+{"id": "N02", "bucket": "C_colloquial", "query": "你们公司老板是谁呀我想认识一下", "expected_refusal": true}
