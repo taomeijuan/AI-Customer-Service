@@ -1,4 +1,5 @@
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -38,6 +39,14 @@ def _ordered(evidences: list[Evidence]) -> list[Evidence]:
     return [evidences[0], *evidences[2:], evidences[1]]
 
 
+_ANSWER_ARTIFACTS = re.compile(r"</?(?:answer|invoke)[^>]*>", re.IGNORECASE)
+
+
+def _sanitize(answer: str) -> str:
+    """剥掉上游偶发泄漏的伪影标签（实测出现过 </answer></invoke>）。"""
+    return _ANSWER_ARTIFACTS.sub("", answer).strip()
+
+
 def assemble_blocks(evidences: list[Evidence]) -> list[str]:
     """证据编号 [1..K] 的知识文本块。"""
     return [
@@ -73,10 +82,11 @@ class Answerer:
                 low_confidence=True,
             )
         parsed = result["parsed"]
-        citations = self._build_citations(evidences, parsed.answer) if parsed.useful else []
+        parsed_answer = _sanitize(parsed.answer)
+        citations = self._build_citations(evidences, parsed_answer) if parsed.useful else []
         return AnswerOutcome(
             useful=parsed.useful,
-            answer=parsed.answer,
+            answer=parsed_answer,
             reason=parsed.reason,
             citations=citations,
             low_confidence=not parsed.useful,
@@ -84,17 +94,18 @@ class Answerer:
 
     @staticmethod
     def _build_citations(evidences: list[Evidence], answer: str) -> list[dict]:
-        """角标 [n] 按组装序号映射回原始 chunk；只携带被引用的条目。"""
-        cited = []
-        for n, ev in enumerate(_ordered(evidences), start=1):
-            if f"[{n}]" in answer:
-                cited.append(
-                    {
-                        "n": n,
-                        "chunk_id": ev.chunk_id,
-                        "section_path": ev.section_path,
-                        "question": ev.question,
-                        "answer": ev.answer,
-                    }
-                )
-        return cited
+        """Top-K 证据全集快照（用户 DDL 注释语义：复盘编造时要看到「手里有什么、
+        实际引了什么」——未被引用的干扰证据同样是判断依据）。
+
+        编号 [n] 与组装序号一致；answer 里通常只引用其中两三条。
+        """
+        return [
+            {
+                "n": n,
+                "chunk_id": ev.chunk_id,
+                "section_path": ev.section_path,
+                "question": ev.question,
+                "answer": ev.answer,
+            }
+            for n, ev in enumerate(_ordered(evidences), start=1)
+        ]

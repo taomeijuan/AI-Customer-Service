@@ -194,13 +194,6 @@ class MilvusStore:
         rows = self._client.query(self.collection, filter="id >= 0", output_fields=["id"])
         return {r["id"] for r in rows}
 
-    def count(self) -> int:
-        self.ensure_collection()
-        return self._client.query(
-            self.collection, filter="id >= 0", output_fields=["id"]
-        ).__len__()
-
-
 class LazyMilvusStore:
     """惰性包装：Milvus 未启动时应用仍可启动（在线检索/建库首次使用时才连接）。
 

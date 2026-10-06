@@ -172,3 +172,42 @@ async def test_leading_text_persisted_in_tool_mode(session_factory, db_session):
     rows = (await db_session.execute(select(Message).order_by(Message.id))).scalars().all()
     assert rows[1].content == "让我查一下"  # 先行正文落库，下轮模型可见
     assert rows[1].tool_calls[0]["name"] == "query_faq"
+
+
+@pytest.mark.usefixtures("db_session")
+async def test_final_answer_short_circuit(session_factory, db_session):
+    """评审 M6：质控工具的 final_answer 短路——不发生二次模型调用，citations 进 done 帧。"""
+    tc = {"name": "query_faq", "args": '{"keyword": "退货"}', "id": "c7", "index": 0, "type": "tool_call_chunk"}
+
+    class FinalAnswerRegistry(FakeRegistry):
+        async def execute(self, name, args):
+            self.executed.append((name, args))
+            return {
+                "ok": True,
+                "data": {
+                    "refused": False,
+                    "final_answer": "满99包邮[1]",
+                    "citations": [{"n": 1, "chunk_id": 8, "section_path": "售后政策/运费说明", "question": "邮费", "answer": "满99包邮"}],
+                },
+            }
+
+    model = FakeModel(
+        [
+            [FakeChunk(tool_call_chunks=[tc])],  # 第一轮：调工具
+            [FakeChunk(text="不应")],            # 第二轮不应发生
+        ]
+    )
+    o = make_orchestrator(model, session_factory, registry=FinalAnswerRegistry())
+    events = [e async for e in o.run(user_id="u1", conversation_id=None, message="邮费多少")]
+
+    kinds = [k for k, _ in events]
+    assert kinds.count("done") == 1  # 不重复发 done
+    assert len(model.calls) == 1  # 短路：没有二次模型调用
+    deltas = "".join(v.get("text", "") for k, v in events if k == "delta")
+    assert deltas == "满99包邮[1]"
+    done_data = [v for k, v in events if k == "done"][0]
+    assert done_data["citations"][0]["chunk_id"] == 8
+    # 落库仍完整：user / assistant(tool_calls) / tool / assistant(最终回答)
+    rows = (await db_session.execute(select(Message).order_by(Message.id))).scalars().all()
+    assert [r.role for r in rows] == ["user", "assistant", "tool", "assistant"]
+    assert rows[3].content == "满99包邮[1]"

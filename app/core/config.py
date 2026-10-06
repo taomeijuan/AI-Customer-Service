@@ -25,7 +25,6 @@ class Settings(BaseSettings):
     milvus_uri: str = "http://localhost:19530"
     milvus_collection: str = "knowledge"
     retrieval_top_k: int = 3
-    retrieval_score_threshold: float = 0.45
     mine_batch_size: int = 10
 
     rerank_api_base: str = "https://api.siliconflow.cn/v1"
@@ -35,6 +34,7 @@ class Settings(BaseSettings):
     hybrid_candidates: int = 50
     rrf_k: int = 60
     retrieval_low_conf_threshold: float = 0.45
+    faq_tool_timeout: float = 30.0  # RAG 链（改写+混合检索+精排+生成）专用预算
 
 
 @lru_cache

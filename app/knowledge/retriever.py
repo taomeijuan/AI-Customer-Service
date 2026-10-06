@@ -45,7 +45,11 @@ class HybridRetriever:
     ) -> RetrievalResult:
         rewritten = await self._rewriter.rewrite(query)
         search_text = " ".join([rewritten.normalized, *rewritten.synonyms]).strip()
-        flt = f'category like "{category_prefix}%"' if category_prefix else None
+        if category_prefix:
+            safe = category_prefix.replace("\\", "\\\\").replace('"', '\\"').replace("%", "\\%")
+            flt = f'category like "{safe}%"'
+        else:
+            flt = None
 
         if strategy == "dense":
             vector = await self._embedder.embed_one(search_text)
@@ -54,10 +58,15 @@ class HybridRetriever:
             raw = self._milvus.search_text(search_text, top_k=self._settings.retrieval_top_k, filter=flt)
         else:  # hybrid / hybrid_rerank
             vector = await self._embedder.embed_one(search_text)
+            # 融合池要喂得饱精排：hybrid_rerank 至少取 rerank_top_n 条候选
+            fusion_top_k = max(
+                self._settings.retrieval_top_k,
+                self._settings.rerank_top_n if strategy == "hybrid_rerank" and self._reranker else 0,
+            )
             raw = self._milvus.hybrid_search(
                 query_vector=vector,
                 query_text=search_text,
-                top_k=self._settings.retrieval_top_k,
+                top_k=fusion_top_k,
                 filter=flt,
                 rrf_k=self._settings.rrf_k,
                 candidates=self._settings.hybrid_candidates,
@@ -74,15 +83,17 @@ class HybridRetriever:
             for hit in raw
         ]
 
+        reranked = False
         if strategy == "hybrid_rerank" and self._reranker is not None and evidences:
             # Reranker.rerank 是 async（httpx.AsyncClient），直接 await
-            evidences = await self._reranker.rerank(query, evidences, self._settings.rerank_top_n)
+            evidences, reranked = await self._reranker.rerank(
+                query, evidences, self._settings.rerank_top_n
+            )
 
-        # 置信度语义按策略区分：rerank relevance_score 与 dense COSINE 是 0-1 可比阈值；
-        # RRF/BM25 分数不是置信度，无可比阈值时不判低置信。
-        if strategy == "hybrid_rerank" and self._reranker is not None:
-            top_score = evidences[0].score if evidences else 0.0
-            low_confidence = not evidences or top_score < self._settings.retrieval_low_conf_threshold
+        # 置信度语义按策略区分：仅「精排成功后的 relevance_score」与「dense COSINE」
+        # 是 0-1 可比阈值；降级时 score 仍是 RRF/BM25 分数，与阈值不可比，不判低置信。
+        if strategy == "hybrid_rerank" and reranked:
+            low_confidence = not evidences or evidences[0].score < self._settings.retrieval_low_conf_threshold
         elif strategy == "dense":
             low_confidence = not evidences or evidences[0].score < self._settings.retrieval_low_conf_threshold
         else:

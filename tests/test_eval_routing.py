@@ -4,10 +4,9 @@ from pathlib import Path
 import pytest
 from langchain.messages import HumanMessage
 
-from app.core.config import get_settings
 from app.core.llm import get_chat_model
-from app.knowledge.embedder import build_embedder
-from app.knowledge.milvus_store import MilvusStore
+from app.generation.answerer import AnswerOutcome
+from app.knowledge.retriever import RetrievalResult
 from app.tools.ecommerce import query_logistics, query_order, query_product
 from app.tools.faq import build_query_faq_tool
 from app.tools.ticket import build_create_ticket_tool
@@ -25,18 +24,27 @@ pytestmark = [
 ]
 
 
+class _FakeRetriever:
+    async def retrieve(self, q):
+        return RetrievalResult(evidences=[], low_confidence=False)
+
+
+class _FakeAnswerer:
+    async def answer(self, q, evs):
+        return AnswerOutcome(useful=True, answer="占位", citations=[])
+
+
 @pytest.mark.parametrize("sample", load_samples(), ids=lambda s: s["text"][:12])
 async def test_tool_routing_sample(session_factory, db_session, sample):
     """真实模型选型断言：五工具全量绑定，只看选了谁、不执行。"""
-    s = get_settings()
-    embedder = build_embedder(s)
-    store = MilvusStore(uri=s.milvus_uri, collection=s.milvus_collection)
-    store.ensure_collection()
+    from types import SimpleNamespace
+
+    s = SimpleNamespace(retrieval_low_conf_threshold=0.45)
     tools = [
         query_order,
         query_product,
         query_logistics,
-        build_query_faq_tool(embedder, store, s),
+        build_query_faq_tool(db_session, _FakeRetriever(), _FakeAnswerer(), s, conversation_id=1),
         build_create_ticket_tool(db_session, conversation_id=1),  # 占位 cid，不执行
     ]
     model = get_chat_model().bind_tools(tools)

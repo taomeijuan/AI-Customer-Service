@@ -10,9 +10,10 @@ from app.repositories.faith_cases import FaithCasesRepo
 logger = logging.getLogger(__name__)
 
 JUDGE_PROMPT = (
-    "你是忠实度裁判。判断【回答】是否完全被【知识条目】支持：\n"
+    "你是忠实度裁判。判断【回答】是否恰当回答了【用户问题】且完全被【知识条目】支持：\n"
     "- 回答中任何一条事实性陈述（数字、时间、承诺、规则）在知识条目里找不到依据 → 不支持。\n"
     "- 回答对知识的转述、概括、口语化不算编造。\n"
+    "- 回答与用户问题无关（答非所问）→ 不支持。\n"
     "只输出 JSON：{\"faithful\": true/false, \"reason\": \"...\"}"
 )
 
@@ -49,7 +50,7 @@ class FaithfulnessJudge:
             f"[{c['n']}] {c['question']}：{c['answer']}" for c in citations
         )
         result = await self._structured.ainvoke(
-            [HumanMessageIfAvailable(f"{JUDGE_PROMPT}\n\n知识条目：\n{knowledge}\n\n【回答】：{answer}")]
+            [HumanMessageIfAvailable(f"{JUDGE_PROMPT}\n\n【用户问题】：{query}\n\n知识条目：\n{knowledge}\n\n【回答】：{answer}")]
         )
         if result["parsing_error"] or result["parsed"] is None:
             logger.warning("faithfulness judge 解析失败: %s", result["parsing_error"])
@@ -86,9 +87,14 @@ def aggregate_report(rows: list[dict]) -> dict:
             if k in ("bucket", "n") or not isinstance(v, (int, float)):
                 continue
             bucket[k] = bucket.get(k, 0.0) + v
+            bucket[f"_cnt_{k}"] = bucket.get(f"_cnt_{k}", 0) + 1
     for bucket in out.values():
         n = bucket.pop("n")
         for k in list(bucket):
-            bucket[k] = bucket[k] / n
+            if k.startswith("_cnt_"):  # 计数键不当指标处理
+                bucket.pop(k, None)
+                continue
+            bucket[k] = bucket[k] / bucket.get(f"_cnt_{k}", n)
+            bucket.pop(f"_cnt_{k}", None)
         bucket["n"] = n
     return out

@@ -54,4 +54,29 @@ else
 fi
 
 echo
+echo "=== 6) 引用编号与拒答（ch04）==="
+CITE_STREAM=$(curl -sN -X POST "$BASE/api/chat/stream" -H 'Content-Type: application/json' \
+  -d '{"user_id": "acceptance-user", "message": "邮费与包邮规则是什么"}')
+echo "$CITE_STREAM" | grep -E '^event:' | sort | uniq -c
+DONE_LINE=$(echo "$CITE_STREAM" | grep '^data:' | tail -1)
+if echo "$DONE_LINE" | grep -q '"citations"'; then
+  echo "✓ done 帧携带 citations（前端可点角标的数据源）"
+else
+  echo "✗ done 帧缺 citations" && exit 1
+fi
+
+REFUSAL=$(curl -sN -X POST "$BASE/api/chat/stream" -H 'Content-Type: application/json' \
+  -d '{"user_id": "acceptance-user", "message": "量子速递是什么时候发明的"}')
+ANSWER=$(echo "$REFUSAL" | grep '^data:' | sed 's/^data://' | python3 -c '
+import sys, json
+print("".join(json.loads(l).get("text","") for l in sys.stdin if json.loads(l).get("text")))
+')
+echo "拒答回复: $ANSWER"
+if echo "$ANSWER" | grep -qE "暂时没有|答不了|转人工|资料"; then
+  echo "✓ 知识库外问题明确拒答（问题已入低置信度池）"
+else
+  echo "✗ 未观察到拒答话术（模型可能直答，属 LLM 路由风险，见 dev-notes）"
+fi
+
+echo
 echo "=== 验收完成 ==="

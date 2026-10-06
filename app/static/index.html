@@ -260,10 +260,11 @@ function showCitation(el, citations, n) {
   const card = document.createElement('div');
   card.className = 'cite-detail';
   card.dataset.n = String(n);
-  card.innerHTML = `<div class="cite-path">📂 ${c.section_path}</div>
-    <div class="cite-q">${c.question}</div>
-    <div class="cite-a"></div>`;
-  card.querySelector('.cite-a').textContent = c.answer;  // 原文 textContent 防注入
+  card.innerHTML = '<div class="cite-path"></div><div class="cite-q"></div><div class="cite-a"></div>';
+  // section_path/question 可能含对话挖掘的用户原话，一律 textContent 防 XSS（评审 M5）
+  card.querySelector('.cite-path').textContent = `📂 ${c.section_path}`;
+  card.querySelector('.cite-q').textContent = c.question;
+  card.querySelector('.cite-a').textContent = c.answer;
   el.appendChild(card);
 }
 
@@ -277,10 +278,13 @@ function addToolChip(bubble, name, running) {
 }
 
 // ── 满意度反馈：一次性锁定，纯前端采集（ch09 数据飞轮入口）──
-function addFeedback(bubble, note) {
+function addFeedback(bubble, answerText) {
   const bar = document.createElement('div');
   bar.className = 'feedback';
-  const msgKey = `${conversationId}:${chat.querySelectorAll('.row.bot').length}`;
+  // 键 = 会话 + 回答内容指纹：页面刷新后消息序号重排不会错配（评审 minor 6）
+  let h = 0;
+  for (let i = 0; i < answerText.length; i++) { h = (h * 31 + answerText.charCodeAt(i)) >>> 0; }
+  const msgKey = `${conversationId}:${h}`;
   const saved = localStorage.getItem('cs_fb_' + msgKey);
   const up = document.createElement('button');
   up.textContent = '👍 有帮助';
@@ -288,7 +292,6 @@ function addFeedback(bubble, note) {
   down.textContent = '👎 没帮助';
   const tip = document.createElement('span');
   tip.className = 'done-tip';
-  if (note) tip.textContent = note;
 
   function lock(choice) {
     up.disabled = down.disabled = true;
@@ -392,7 +395,7 @@ async function send() {
           } else {
             renderMd(textEl, raw);
           }
-          addFeedback(botBubble, citations.length ? '有引用' : '');
+          addFeedback(botBubble, raw);  // 内容指纹作锁定键
         }
       }
     }

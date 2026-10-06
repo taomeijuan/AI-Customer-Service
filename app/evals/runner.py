@@ -55,6 +55,10 @@ async def run_strategy(strategy: str, samples: list[dict], deps: dict) -> list[d
         relevant = set(s["relevant_chunk_ids"])
         outcome = await answerer.answer(s["query"], result.evidences)
         row = {"bucket": s["bucket"], "id": s["id"]}
+        if result.low_confidence:  # 正例也可能触发检索侧拒答：标记并跳过指标（评审 minor 8⑧）
+            row["refused"] = True
+            rows.append(row)
+            continue
         for k in KS:
             row[f"recall@{k}"] = recall_at_k(relevant, ranked, k)
         row["mrr"] = mrr(relevant, ranked)

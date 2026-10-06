@@ -63,13 +63,13 @@ class FakeReranker:
     def __init__(self):
         self.called = False
 
-    async def rerank(self, query, evidences, top_n):  # 与真实 Reranker 同为 async
+    async def rerank(self, query, evidences, top_n):  # 与真实 Reranker 同为 async，返回 (out, reranked)
         self.called = True
         out = []
         for i, e in enumerate(evidences[:top_n]):
             e.score = 0.9 - 0.1 * i
             out.append(e)
-        return out
+        return out, True
 
 
 def make(milvus, rewriter=None, reranker=None):
@@ -134,7 +134,7 @@ async def test_low_confidence_flag_when_all_scores_low():
             self.called = True
             for e in evidences[:top_n]:
                 e.score = 0.001  # 精排分低于阈值
-            return evidences[:top_n]
+            return evidences[:top_n], True
 
     milvus = FakeMilvus(hybrid_hits=[(1, 0.001)])
     retriever = make(milvus, reranker=LowScoreReranker())

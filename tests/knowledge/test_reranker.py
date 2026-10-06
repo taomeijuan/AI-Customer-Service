@@ -33,20 +33,21 @@ def make_reranker(results=None, status: int = 200):
 async def test_rerank_orders_by_relevance():
     r, captured = make_reranker()
     docs = [_chunk(1), _chunk(2), _chunk(3)]
-    out = await r.rerank("query", docs, top_n=2)
+    out, reranked = await r.rerank("query", docs, top_n=2)
+    assert reranked is True
     assert [e.chunk_id for e in out] == [3, 1]  # 按 results.index 映射回原文档
     assert out[0].score == 0.9
     assert b"AF" not in captured["body"]
     assert b"answer" in captured["body"] or b"\xe7\xad\x94\xe6\xa1\x88" in captured["body"]  # 文档文本入请求
 
 
-async def test_rerank_api_error_returns_original_order():
-    """评审预案：rerank 失败降级为原序，不炸检索链。"""
+async def test_rerank_api_error_flags_degraded():
+    """评审 M3：降级必须显式标记——原序返回时 score 仍是 RRF 分数，不可与阈值比较。"""
     r, _ = make_reranker(status=500)
     docs = [_chunk(1), _chunk(2)]
-    out = await r.rerank("query", docs, top_n=2)
+    out, reranked = await r.rerank("query", docs, top_n=2)
     assert [e.chunk_id for e in out] == [1, 2]
-    assert out[0].score == 0.0  # 降级时无精排分
+    assert reranked is False
 
 
 def test_build_reranker_without_key_returns_none():

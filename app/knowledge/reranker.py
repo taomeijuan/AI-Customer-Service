@@ -28,7 +28,13 @@ class Reranker:
         self.model = model
         self.retries = retries
 
-    async def rerank(self, query: str, evidences: list[Evidence], top_n: int) -> list[Evidence]:
+    async def rerank(self, query: str, evidences: list[Evidence], top_n: int) -> tuple[list[Evidence], bool]:
+        """返回 (精排后证据, 是否精排成功)。
+
+        失败降级为原序并把第二位返回 False——调用方（retriever）据此跳过置信度
+        阈值判定：降级时 Evidence.score 仍是 RRF/BM25 分数，与 0-1 的精排分
+        不可比，误比较会导致全量误判低置信。
+        """
         documents = [e.answer for e in evidences]
         last_err: Exception | None = None
         for attempt in range(self.retries + 1):
@@ -56,12 +62,12 @@ class Reranker:
                             score=item["relevance_score"],
                         )
                     )
-                return out
+                return out, True
             except Exception as e:
                 last_err = e
                 logger.warning("rerank attempt %d failed: %s", attempt + 1, e)
         logger.warning("rerank degraded to original order: %s", last_err)
-        return evidences[:top_n]
+        return evidences[:top_n], False
 
 
 def build_reranker(settings: Settings) -> Reranker | None:

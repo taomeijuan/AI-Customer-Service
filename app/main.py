@@ -40,8 +40,10 @@ def build_registry(
     reg.register(query_order)
     reg.register(query_product)
     reg.register(query_logistics)
+    # M1：RAG 链（改写+混合检索+精排+生成）远超 3s，单列超时；超时重试会旁路质控，必须给足
     reg.register(
-        build_query_faq_tool(session, retriever, answerer, settings, conversation_id)
+        build_query_faq_tool(session, retriever, answerer, settings, conversation_id),
+        timeout=settings.faq_tool_timeout,
     )
     reg.register(build_create_ticket_tool(session, conversation_id))
     return reg
