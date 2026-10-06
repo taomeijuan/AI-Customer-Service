@@ -33,6 +33,9 @@ class FakeMilvus:
     def upsert(self, rows):
         pass
 
+    def all_ids(self):
+        return set()  # 空集合：全部块视为待向量化
+
 
 @pytest.fixture
 async def dialog_cid(session_factory, db_session):

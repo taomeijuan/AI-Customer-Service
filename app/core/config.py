@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     retrieval_score_threshold: float = 0.45
     mine_batch_size: int = 10
 
+    rerank_api_base: str = "https://api.siliconflow.cn/v1"
+    rerank_api_key: str = ""
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    rerank_top_n: int = 10
+    hybrid_candidates: int = 50
+    rrf_k: int = 60
+    retrieval_low_conf_threshold: float = 0.45
+
 
 @lru_cache
 def get_settings() -> Settings:

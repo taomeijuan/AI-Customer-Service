@@ -14,6 +14,7 @@ from app.generation.answerer import AnswerSchema, Answerer
 from app.knowledge.embedder import build_embedder
 from app.knowledge.milvus_store import MilvusStore
 from app.knowledge.query_rewriter import LangChainRewriter
+from app.extraction.service import build_structured_model
 from app.knowledge.retriever import HybridRetriever
 from app.knowledge.reranker import build_reranker
 from app.repositories.low_confidence import LowConfidenceRepo
@@ -157,9 +158,11 @@ class LowConfidenceRepoAdapter:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(description="ch04 检索质量评估")
-    parser.add_argument("--strategy", default="all", choices=[*STRATEGIES, "all"])
+    parser.add_argument("--strategy", nargs="+", default=["all"], choices=[*STRATEGIES, "all"])
     args = parser.parse_args()
-    strategies = list(STRATEGIES) if args.strategy == "all" else [args.strategy]
+    strategies = (
+        list(STRATEGIES) if "all" in args.strategy else [x for x in args.strategy if x in STRATEGIES]
+    )
     result = asyncio.run(run_all(strategies))
     for strategy, rows in result.items():
         pos = [r for r in rows if "recall@3" in r]

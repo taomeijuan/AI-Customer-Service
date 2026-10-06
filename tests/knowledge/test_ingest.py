@@ -19,10 +19,18 @@ class FakeEmbedder:
 class FakeMilvus:
     def __init__(self):
         self.rows: dict[int, dict] = {}
+        self.existing_ids: set | None = None  # None=与 rows 同步
+
+    def all_ids(self):
+        if self.existing_ids is not None:
+            return self.existing_ids
+        return set(self.rows)
 
     def upsert(self, rows):
         for r in rows:
             self.rows[r["id"]] = r
+            if self.existing_ids is not None:
+                self.existing_ids.add(r["id"])
 
 
 @pytest.fixture
@@ -98,3 +106,18 @@ async def test_link_neighbors(repo):
     assert first.next_chunk_id == ids[1] and first.prev_chunk_id is None
     assert mid.prev_chunk_id == ids[0] and mid.next_chunk_id == ids[2]
     assert last.prev_chunk_id == ids[1] and last.next_chunk_id is None
+
+
+async def test_reconcile_backfills_missing_milvus_vectors(repo):
+    """验收2扩展（ch04 发现）：集合重建后 MySQL 全 done 但 Milvus 缺向量 → 对账补齐。"""
+    await repo.upsert_chunks(
+        [
+            {"category": "c", "questions": "q1", "answer": "a1", "content_type": "policy"},
+            {"category": "c", "questions": "q2", "answer": "a2", "content_type": "policy"},
+        ]
+    )
+    milvus = FakeMilvus()
+    milvus.existing_ids = set()  # 模拟空集合（重建后）
+    done = await ingest_pending(repo, FakeEmbedder(), milvus)
+    assert done == 2  # 两块都补写
+    assert set(milvus.rows) == {1, 2}

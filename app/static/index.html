@@ -138,6 +138,37 @@
   }
   #send:disabled { opacity: .45; cursor: not-allowed; }
   .hint { text-align: center; font-size: 11px; color: var(--text-dim); padding: 6px 0 10px; }
+  sup.cite {
+    color: var(--brand);
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 11px;
+    padding: 0 2px;
+  }
+  sup.cite:hover { text-decoration: underline; }
+  .cite-detail {
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: var(--brand-soft);
+    border-left: 3px solid var(--brand);
+    border-radius: 6px;
+    font-size: 12.5px;
+  }
+  .cite-path { color: #d84315; font-weight: 600; margin-bottom: 4px; }
+  .cite-q { font-weight: 600; margin-bottom: 2px; }
+  .cite-a { color: #5d4037; }
+  .feedback { display: flex; gap: 6px; margin-top: 8px; align-items: center; }
+  .feedback button {
+    border: 1px solid #e3e5e8;
+    background: #fff;
+    border-radius: 8px;
+    padding: 3px 10px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .feedback button:hover { border-color: var(--brand); }
+  .feedback button.on { background: var(--brand-soft); border-color: var(--brand); }
+  .feedback .done-tip { font-size: 11.5px; color: var(--text-dim); }
 </style>
 </head>
 <body>
@@ -205,6 +236,37 @@ function renderMd(el, text) {
     .replace(/\n/g, '<br>');
 }
 
+// 带引用角标的渲染：[n] 转成可点上标，点击展开来源原文
+function renderAnswer(el, text, citations) {
+  renderMd(el, text);
+  if (!citations || !citations.length) return;
+  const quote = (m, n) => {
+    const c = citations.find((x) => x.n === Number(n));
+    if (!c) return m;
+    return `<sup class="cite" data-n="${c.n}">[${c.n}]</sup>`;
+  };
+  el.innerHTML = el.innerHTML.replace(/\[(\d+)\]/g, quote);
+  el.querySelectorAll('sup.cite').forEach((sup) => {
+    sup.addEventListener('click', () => showCitation(el, citations, Number(sup.dataset.n)));
+  });
+}
+
+function showCitation(el, citations, n) {
+  const old = el.querySelector('.cite-detail');
+  if (old && old.dataset.n === String(n)) { old.remove(); return; }
+  if (old) old.remove();
+  const c = citations.find((x) => x.n === n);
+  if (!c) return;
+  const card = document.createElement('div');
+  card.className = 'cite-detail';
+  card.dataset.n = String(n);
+  card.innerHTML = `<div class="cite-path">📂 ${c.section_path}</div>
+    <div class="cite-q">${c.question}</div>
+    <div class="cite-a"></div>`;
+  card.querySelector('.cite-a').textContent = c.answer;  // 原文 textContent 防注入
+  el.appendChild(card);
+}
+
 function addToolChip(bubble, name, running) {
   const chips = bubble.querySelector('.tools');
   const chip = document.createElement('span');
@@ -212,6 +274,36 @@ function addToolChip(bubble, name, running) {
   chip.textContent = `🔧 ${name} · ${running ? '查询中' : '完成'}`;  // 工具名来自模型，禁用 innerHTML 防 XSS
   chips.appendChild(chip);
   return chip;
+}
+
+// ── 满意度反馈：一次性锁定，纯前端采集（ch09 数据飞轮入口）──
+function addFeedback(bubble, note) {
+  const bar = document.createElement('div');
+  bar.className = 'feedback';
+  const msgKey = `${conversationId}:${chat.querySelectorAll('.row.bot').length}`;
+  const saved = localStorage.getItem('cs_fb_' + msgKey);
+  const up = document.createElement('button');
+  up.textContent = '👍 有帮助';
+  const down = document.createElement('button');
+  down.textContent = '👎 没帮助';
+  const tip = document.createElement('span');
+  tip.className = 'done-tip';
+  if (note) tip.textContent = note;
+
+  function lock(choice) {
+    up.disabled = down.disabled = true;
+    up.classList.toggle('on', choice === 'up');
+    down.classList.toggle('on', choice === 'down');
+    tip.textContent = '已反馈';
+    localStorage.setItem('cs_fb_' + msgKey, choice);
+  }
+  if (saved) { lock(saved); }
+  else {
+    up.addEventListener('click', () => lock('up'));
+    down.addEventListener('click', () => lock('down'));
+  }
+  bar.append(up, down, tip);
+  bubble.appendChild(bar);
 }
 
 function setBusy(b) {
@@ -292,7 +384,15 @@ async function send() {
           botBubble.classList.add('error');
           renderMd(textEl, payload.message || '服务暂时不可用');
         } else if (event === 'done') {
+          const raw = textEl.dataset.raw || '';
           delete textEl.dataset.raw;
+          const citations = payload.citations || [];
+          if (citations.length) {
+            renderAnswer(textEl, raw, citations);  // [n] 转可点角标
+          } else {
+            renderMd(textEl, raw);
+          }
+          addFeedback(botBubble, citations.length ? '有引用' : '');
         }
       }
     }

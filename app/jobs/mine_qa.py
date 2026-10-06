@@ -154,6 +154,12 @@ class KnowledgeRepoAdapter:
         async with self._sf() as session:
             return await KnowledgeRepo(session).list_pending(limit)
 
+    async def list_done(self):
+        from app.knowledge.repository import KnowledgeRepo
+
+        async with self._sf() as session:
+            return await KnowledgeRepo(session).list_done()
+
     async def mark_done(self, chunk_id: int, vector_id: str):
         from app.knowledge.repository import KnowledgeRepo
 

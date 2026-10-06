@@ -63,6 +63,12 @@ class KnowledgeRepo:
         )
         return list(result.scalars().all())
 
+    async def list_done(self) -> list[KnowledgeChunk]:
+        result = await self._session.execute(
+            select(KnowledgeChunk).where(KnowledgeChunk.vectorize_status == "done").order_by(KnowledgeChunk.id)
+        )
+        return list(result.scalars().all())
+
     async def mark_done(self, chunk_id: int, vector_id: str) -> None:
         chunk = await self.get(chunk_id)
         chunk.vector_id = vector_id

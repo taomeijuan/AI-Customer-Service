@@ -188,6 +188,12 @@ class MilvusStore:
             )
         return hits
 
+    def all_ids(self) -> set[int]:
+        """集合内全部主键（供双写对账：MySQL done 但 Milvus 缺失 → 补写）。"""
+        self.ensure_collection()
+        rows = self._client.query(self.collection, filter="id >= 0", output_fields=["id"])
+        return {r["id"] for r in rows}
+
     def count(self) -> int:
         self.ensure_collection()
         return self._client.query(
@@ -236,6 +242,9 @@ class LazyMilvusStore:
         filter: str | None = None,
     ) -> list[dict]:
         return self._get().search(vector, top_k, score_threshold, filter)
+
+    def all_ids(self) -> set[int]:
+        return self._get().all_ids()
 
     def search_text(self, query_text: str, top_k: int = 3, filter: str | None = None) -> list[dict]:
         return self._get().search_text(query_text, top_k, filter)
