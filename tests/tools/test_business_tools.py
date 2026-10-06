@@ -43,35 +43,68 @@ async def test_query_logistics_shape():
 
 
 @pytest.mark.usefixtures("db_session")
-async def test_query_faq_vector_search_contract(db_session):
-    """ch03：内核换向量检索，契约不变（{count, items}）。"""
-    milvus = FakeMilvus(
-        hits=[
-            {
-                "id": 1,
-                "distance": 0.82,
-                "entity": {
-                    "questions": "邮费与包邮规则",
-                    "answer": "满99元包邮，否则8元邮费",
-                    "category": "售后政策>运费说明",
-                },
-            }
-        ]
+async def test_query_faq_quality_control(db_session):
+    """ch04：混合检索 + 生成质控三路径（正常/检索低置信/自评不足）。"""
+    from types import SimpleNamespace
+
+    from app.knowledge.reranker import Evidence
+    from app.repositories.low_confidence import LowConfidenceRepo
+
+    settings_stub = SimpleNamespace(retrieval_low_conf_threshold=0.45)
+    ev = Evidence(chunk_id=7, section_path="售后政策/运费说明", question="邮费", answer="满99包邮", score=0.9)
+
+    class FakeRetriever:
+        def __init__(self, result):
+            self.result = result
+        async def retrieve(self, q):
+            return self.result
+
+    class FakeAnswerer:
+        def __init__(self, outcome):
+            self.outcome = outcome
+        async def answer(self, q, evs):
+            return self.outcome
+
+    from app.generation.answerer import AnswerOutcome
+    from app.knowledge.retriever import RetrievalResult
+    from app.repositories.conversations import ConversationsRepo
+
+    cid = await ConversationsRepo(db_session).ensure_conversation(user_id="qc-user")
+    # ① 正常路径：final_answer + citations
+    tool = build_query_faq_tool(
+        db_session,
+        FakeRetriever(RetrievalResult(evidences=[ev], low_confidence=False)),
+        FakeAnswerer(AnswerOutcome(useful=True, answer="满99包邮[1]", citations=[{"n": 1, "chunk_id": 7, "section_path": "售后政策/运费说明", "question": "邮费", "answer": "满99包邮"}])),
+        settings_stub, cid,
     )
-    faq_tool = build_query_faq_tool(FakeEmbedder(), milvus, SETTINGS_STUB)
-    out = await faq_tool.ainvoke({"keyword": "邮费多少"})
-    assert out["count"] == 1 and "满99" in out["items"][0]["answer"]
-    assert milvus.queries[0]["top_k"] == 3
-    assert milvus.queries[0]["threshold"] == 0.45
-    # 低分全滤掉 → 空结果（对应 ch02 的「查不到」语义）
-    empty = build_query_faq_tool(
-        FakeEmbedder(), FakeMilvus(hits=[]), SETTINGS_STUB
+    out = await tool.ainvoke({"keyword": "邮费多少"})
+    assert out["refused"] is False and out["final_answer"] == "满99包邮[1]"
+    assert out["citations"][0]["chunk_id"] == 7
+
+    # ② 检索低置信：拒答 + 入池（retrieval_low_conf）
+    tool2 = build_query_faq_tool(
+        db_session,
+        FakeRetriever(RetrievalResult(evidences=[], low_confidence=True)),
+        FakeAnswerer(None), settings_stub, cid,
     )
-    out2 = await empty.ainvoke({"keyword": "邮费"})
-    assert out2["count"] == 0 and out2["items"] == []
+    out2 = await tool2.ainvoke({"keyword": "量子速递多久到"})
+    assert out2["refused"] is True
+    rows = await LowConfidenceRepo(db_session).list_by_source("retrieval_low_conf")
+    assert any(r.raw_question == "量子速递多久到" for r in rows)
+
+    # ③ 自评不足：拒答 + 入池（self_check）
+    tool3 = build_query_faq_tool(
+        db_session,
+        FakeRetriever(RetrievalResult(evidences=[ev], low_confidence=False)),
+        FakeAnswerer(AnswerOutcome(useful=False, answer="这个问题我这边暂时答不了", reason="知识缺")),
+        settings_stub, cid,
+    )
+    out3 = await tool3.ainvoke({"keyword": "量子速递多久到"})
+    assert out3["refused"] is True
+    rows3 = await LowConfidenceRepo(db_session).list_by_source("self_check")
+    assert any("知识缺" in (r.reason or "") for r in rows3)
 
 
-@pytest.mark.usefixtures("db_session")
 async def test_create_ticket_inserts(db_session):
     from app.repositories.conversations import ConversationsRepo
 

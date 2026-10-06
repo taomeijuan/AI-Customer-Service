@@ -43,6 +43,19 @@ def _aggregate_tool_calls(chunks: list) -> list[dict]:
     return out
 
 
+def _extract_final(results: list[dict]) -> tuple[str | None, list | None]:
+    """从工具结果中提取质控工具（query_faq）产出的最终回答与引用。"""
+    for r in results:
+        try:
+            payload = json.loads(r["content"])
+        except json.JSONDecodeError:
+            continue
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if isinstance(data, dict) and data.get("final_answer") is not None:
+            return data["final_answer"], data.get("citations") or []
+    return None, None
+
+
 class Orchestrator:
     """单轮编排：DB 真源 + bind_tools + 注册表执行 + 回灌流式收敛。
 
@@ -133,6 +146,17 @@ class Orchestrator:
                     await msg_repo.append_tool_round(
                         cid, tool_calls, results, ai_content="".join(text_pieces)
                     )
+                    # ── final_answer 短路：query_faq 等质控工具已产出带引用的最终回答 ──
+                    final_answer, citations = _extract_final(results)
+                    if final_answer is not None:
+                        for i in range(0, len(final_answer), 3):  # 分片流式（逐字效果）
+                            yield "delta", {"text": final_answer[i : i + 3]}
+                        done_data: dict = {"conversation_id": cid}
+                        if citations:
+                            done_data["citations"] = citations
+                        yield "done", done_data
+                        await msg_repo.append(cid, [AIMessage(final_answer)])
+                        return
                     feed_messages = messages + [
                         AIMessage(content="", tool_calls=tool_calls)
                     ] + [
