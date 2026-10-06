@@ -25,6 +25,8 @@ async def db_session(session_factory):
             "tickets",
             "conversations",
             "faq",
+            "faith_cases",
+            "low_confidence_questions",
             "knowledge_chunks",
             "qa_extraction_staging",
         ):

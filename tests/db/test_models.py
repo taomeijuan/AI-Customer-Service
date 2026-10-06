@@ -72,3 +72,38 @@ async def test_qa_staging_roundtrip(db_session):
     db_session.add(s)
     await db_session.commit()
     assert s.status == "extracted"
+
+
+@pytest.mark.usefixtures("db_session")
+async def test_low_confidence_question_roundtrip(db_session):
+    from app.db.models import LowConfidenceQuestion
+
+    row = LowConfidenceQuestion(
+        conversation_id=None,
+        raw_question="量子速递是什么时候发明的",
+        source="self_check",
+        reason="知识库无相关内容，生成自评不足",
+    )
+    db_session.add(row)
+    await db_session.commit()
+    await db_session.refresh(row)  # server_default 列需回读
+    assert row.id and row.created_at is not None
+
+
+@pytest.mark.usefixtures("db_session")
+async def test_faith_case_roundtrip(db_session):
+    from app.db.models import FaithCase
+
+    row = FaithCase(
+        eval_id="A01",
+        bucket="A_policy",
+        query="退款多久到账",
+        strategy="hybrid_rerank",
+        answer="保证3分钟到账",
+        reason="证据里没有任何到账承诺",
+        citations=[{"n": 1, "chunk_id": 5, "section_path": "售后政策/退款/退款时限", "question": "退款时限", "answer": "1-3个工作日"}],
+        judge_model="deepseek-chat",
+    )
+    db_session.add(row)
+    await db_session.commit()
+    assert row.id and row.status == "未解决" and row.seen_count == 1
