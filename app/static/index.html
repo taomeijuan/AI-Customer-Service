@@ -140,6 +140,7 @@
 <div class="hint">ch05 · Workflow 编排 · 对话/工单/知识检索已落库</div>
 
 <script>
+window.onerror = function(msg, src, line) { console.error('💥 JS Error:', msg, 'line', line); };
 const chat = document.getElementById('chat');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('send');
@@ -320,6 +321,7 @@ async function send() {
         }
         if (!data) continue;
         const payload = JSON.parse(data);
+        console.log('📡', event, JSON.stringify(payload).slice(0, 100));
         if (event === 'meta') {
           conversationId = payload.conversation_id;
           localStorage.setItem(convKey, JSON.stringify(conversationId));
