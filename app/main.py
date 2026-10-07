@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.chat import router as chat_router
 from app.api.extract import router as extract_router
 from app.api.rag_eval import router as rag_eval_router
+from app.api.tickets import router as tickets_router
 from app.core.config import get_settings
 from app.core.llm import get_chat_model
 from app.db.engine import build_engine
@@ -85,6 +86,7 @@ def create_app() -> FastAPI:
     app.include_router(chat_router)
     app.include_router(extract_router)
     app.include_router(rag_eval_router)
+    app.include_router(tickets_router)
     app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
     return app
 
