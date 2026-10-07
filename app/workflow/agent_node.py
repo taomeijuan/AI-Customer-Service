@@ -1,9 +1,6 @@
-"""主力 Agent 节点：create_react_agent 预构件 + get_stream_writer 实时推流。
+"""主力 Agent 节点：create_react_agent + get_stream_writer 实时推 delta + tool 帧累积。"""
 
-与 ch04 的 yield 模式对齐：工具调用和 LLM token 通过 custom 流实时推送，
-而不是等子图跑完后由父图被动检测。
-"""
-
+import json
 import logging
 from typing import Any
 
@@ -49,7 +46,8 @@ def build_agent_node(
         try:
             writer = get_stream_writer()
         except Exception:
-            writer = lambda data: None  # 图外调用（测试直连）时 no-op
+            writer = lambda data: None
+
         cid = state.get("conversation_id")
         turn = state.get("turn", 1)
         thread_id = f"{cid}:{turn}"
@@ -64,40 +62,56 @@ def build_agent_node(
                 )
 
         final_text = ""
-        tool_calls_seen: list[dict] = []
+        tool_calls_acc: dict[int, dict] = {}  # index → 累积的 tool call
+
         try:
-            # astream 子图：messages 模式拿 LLM token，updates 模式拿工具调用
-            async for mode, chunk in react.astream(
+            async for msg_chunk, _meta in react.astream(
                 {"messages": injected + [HumanMessage(state["query"])]},
                 config={
                     "configurable": {"thread_id": thread_id},
                     "recursion_limit": settings.agent_max_steps,
                 },
-                stream_mode=["messages", "updates"],
+                stream_mode="messages",
             ):
-                if mode == "messages":
-                    msg_chunk, meta = chunk
-                    # ToolMessage 是工具执行结果，不算 LLM token
-                    if isinstance(msg_chunk, ToolMessage):
-                        continue
-                    # LLM token → delta 推给前端
-                    if getattr(msg_chunk, "content", ""):
-                        writer({"delta": {"text": msg_chunk.content}})
-                        final_text += msg_chunk.content
-                elif mode == "updates":
-                    for node_name, update in chunk.items():
-                        if node_name == "agent" and isinstance(update, dict) and update.get("messages"):
-                            ai = update["messages"][-1]
-                            for tc in getattr(ai, "tool_calls", None) or []:
-                                tool_calls_seen.append({"tool": tc["name"], "args": tc.get("args", {})})
+                if isinstance(msg_chunk, ToolMessage):
+                    continue  # 工具结果不算 LLM token
+
+                # 累积 tool_call_chunks → 完整 tool_calls
+                for tcc in getattr(msg_chunk, "tool_call_chunks", None) or []:
+                    idx = (tcc.get("index", 0) if isinstance(tcc, dict) else getattr(tcc, "index", 0)) or 0
+                    slot = tool_calls_acc.setdefault(idx, {"name": "", "args": "", "id": ""})
+                    if isinstance(tcc, dict):
+                        if tcc.get("name"):
+                            slot["name"] = tcc["name"]
+                        if tcc.get("id"):
+                            slot["id"] = tcc["id"]
+                        slot["args"] += tcc.get("args", "") or ""
+                    else:
+                        if getattr(tcc, "name", None):
+                            slot["name"] = tcc.name
+                        if getattr(tcc, "id", None):
+                            slot["id"] = tcc.id
+                        slot["args"] += getattr(tcc, "args", "") or ""
+
+                # LLM token → delta 实时推流
+                if getattr(msg_chunk, "content", ""):
+                    writer({"delta": {"text": msg_chunk.content}})
+                    final_text += msg_chunk.content
+
         except Exception as e:
-            logger.warning("agent node failed (%s), fallback text", e)
+            logger.warning("agent node stream failed (%s), fallback", e)
             final_text = "这个问题我这边处理时遇到了一点困难，帮您转人工确认会更稳妥"
 
-        # 循环结束后一次性推工具帧（可靠：不依赖嵌套上下文的 writer 时序）
-        for tc in tool_calls_seen:
-            writer({"tool": {**tc, "status": "running"}})
-            writer({"tool": {**tc, "status": "done", "ok": True}})
+        # 流结束后：从累积的 tool_call_chunks 重组完整 tool_calls，推工具帧
+        for idx in sorted(tool_calls_acc):
+            tc = tool_calls_acc[idx]
+            if not tc["name"]:
+                continue
+            try:
+                args = json.loads(tc["args"]) if tc["args"] else {}
+            except (json.JSONDecodeError, TypeError):
+                args = {}
+            writer({"tool": {"tool": tc["name"], "args": args, "status": "done", "ok": True}})
 
         return {
             "final_text": final_text,
