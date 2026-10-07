@@ -169,6 +169,18 @@
   .feedback button:hover { border-color: var(--brand); }
   .feedback button.on { background: var(--brand-soft); border-color: var(--brand); }
   .feedback .done-tip { font-size: 11.5px; color: var(--text-dim); }
+  .options-bar { display: flex; gap: 8px; margin-top: 8px; }
+  .options-bar button {
+    border: 1px solid var(--brand);
+    background: #fff;
+    color: var(--brand);
+    border-radius: 8px;
+    padding: 5px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .options-bar button:disabled { opacity: .5; cursor: not-allowed; }
 </style>
 </head>
 <body>
@@ -275,6 +287,49 @@ function addToolChip(bubble, name, running) {
   chip.textContent = `🔧 ${name} · ${running ? '查询中' : '完成'}`;  // 工具名来自模型，禁用 innerHTML 防 XSS
   chips.appendChild(chip);
   return chip;
+}
+
+// ── 投诉可选项：转人工（前端模拟）/建工单（直写端点）——两个独立按钮，互不绑定 ──
+function addOptionsButtons(bubble, options, complaintText) {
+  const bar = document.createElement('div');
+  bar.className = 'options-bar';
+  let acted = false;  // 点了其中一个后另一个仍可用，但每个按钮只生效一次
+  for (const opt of options) {
+    const btn = document.createElement('button');
+    btn.textContent = opt;
+    btn.addEventListener('click', () => {
+      if (btn.disabled) return;
+      btn.disabled = true;
+      if (opt === '转人工') {
+        const row = addRow('bot');
+        row.querySelector('.text').innerHTML =
+          '<b>已转接人工客服</b><br>您好，我是客服小猫，请问有什么可以帮您的？🐱';
+        scrollBottom();
+      } else if (opt === '建工单') {
+        fetch('/api/tickets', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            conversation_id: conversationId,
+            description: complaintText,
+            ticket_type: '投诉',
+          }),
+        })
+          .then((r) => r.json())
+          .then((body) => {
+            const row = addRow('bot');
+            row.querySelector('.text').textContent =
+              `✅ 工单已创建（${body.ticket_no}），人工客服会尽快联系您`;
+            scrollBottom();
+          })
+          .catch(() => {
+            btn.disabled = false;
+          });
+      }
+    });
+    bar.appendChild(btn);
+  }
+  bubble.appendChild(bar);
 }
 
 // ── 满意度反馈：一次性锁定，纯前端采集（ch09 数据飞轮入口）──
@@ -386,6 +441,9 @@ async function send() {
           textEl.textContent = '';
           botBubble.classList.add('error');
           renderMd(textEl, payload.message || '服务暂时不可用');
+        } else if (event === 'options') {
+          // 投诉路径：渲染「转人工」「建工单」两个独立按钮，不自动执行
+          addOptionsButtons(botBubble, payload.options || [], message);
         } else if (event === 'done') {
           const raw = textEl.dataset.raw || '';
           delete textEl.dataset.raw;
