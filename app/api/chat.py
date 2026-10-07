@@ -7,7 +7,7 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 from langchain.messages import ToolMessage
 from pydantic import BaseModel, Field
 
-from app.memory.trimmer import trim_history
+from app.memory.trimmer import trim_history_groups
 from app.repositories.conversations import ConversationsRepo
 from app.repositories.messages import MessagesRepo
 
@@ -59,8 +59,8 @@ async def chat_stream(
     # 历史从 MySQL 真源加载（分工制：checkpointer 只管轮内）
     async with session_factory() as session:
         history = await MessagesRepo(session).load_history(conversation_id)
-    trimmed = trim_history(history, budget_tokens=settings.token_budget)
-    turn = len(history) // 2 + 1
+    trimmed = trim_history_groups(history, budget_tokens=settings.token_budget)
+    turn = len(history) + 1  # 单调递增，奇偶不碰撞
     inputs = {
         "query": req.message,
         "messages": trimmed,
@@ -69,7 +69,7 @@ async def chat_stream(
     }
     config = {
         "configurable": {"thread_id": f"{conversation_id}:{turn}"},
-        "recursion_limit": settings.agent_max_steps,
+        "recursion_limit": settings.agent_max_steps + 4,  # 父图多节点余量
     }
 
     deltas = 0

@@ -71,7 +71,6 @@ def create_app() -> FastAPI:
         agent_node=agent_node,
         intent_classifier=LangChainIntentClassifier(model),
         session_factory=app.state.session_factory,
-        settings=settings,
         checkpointer=InMemorySaver(),
     )
 

@@ -62,7 +62,6 @@ def _node(llm, settings, session_factory):
         llm=llm,
         tools=[query_order, query_logistics],
         settings=settings,
-        session_factory=session_factory,
         checkpointer=InMemorySaver(),
     )
 

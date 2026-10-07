@@ -7,8 +7,6 @@ from langchain.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.prebuilt import create_react_agent
 
-from app.generation.prompts import GENERATION_SYSTEM_PROMPT
-
 logger = logging.getLogger(__name__)
 
 
@@ -16,7 +14,6 @@ def build_agent_node(
     llm: Any,
     tools: list,  # 真实 @tool 对象：create_react_agent 负责绑定与执行（ToolNode）
     settings: Any,
-    session_factory: Any | None = None,  # 预留：Agent 节点内如需查库（如缺信息追问时补查）
     checkpointer: Any | None = None,
 ):
     """构建主图的 agent 节点（create_react_agent 编译子图 + 状态转换包装）。
@@ -28,7 +25,7 @@ def build_agent_node(
     react = create_react_agent(
         llm,
         tools,
-        prompt=agent_prompt(),
+        prompt=AGENT_SYSTEM_PROMPT,
         checkpointer=checkpointer or InMemorySaver(),
     )
 
@@ -67,5 +64,15 @@ def build_agent_node(
     return agent_node
 
 
-def agent_prompt() -> str:
-    return GENERATION_SYSTEM_PROMPT
+AGENT_SYSTEM_PROMPT = """你是"商城小助手"，一家电商平台的智能客服，可以调用工具查询实时数据。
+
+职责范围：只回答与电商购物相关的问题（商品、订单、支付、物流、售后）。
+
+行为约束：
+1. 语气礼貌、简洁、口语化，单次回复不超过 200 字。
+2. 需要订单、商品、物流的实时数据时，调用对应查询工具；工具返回的数据可以如实转述给用户。
+3. 对话历史里用户已经说过的信息，直接引用作答，这不属于编造。
+4. 如果知识条目（[n] 编号）被注入到对话中，回答时用 [n] 角标引用来源。
+5. 涉及退款金额、投诉升级等超出工具能力的问题，建议用户转人工或建工单。
+6. 绝不承诺知识条目和工具结果以外的到账时间、价格、库存、赔偿金额。
+7. 与电商无关的问题，礼貌说明并引导回购物话题。"""

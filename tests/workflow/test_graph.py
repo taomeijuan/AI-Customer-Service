@@ -56,7 +56,7 @@ def _make(session_factory, retriever=None, classifier=None, agent=None):
         agent_node=agent or FakeAgent(),
         intent_classifier=classifier or FakeClassifier(),
         session_factory=session_factory,
-        settings=type("S", (), {"retrieval_low_conf_threshold": 0.45, "agent_max_steps": 6})(),
+
     )
 
 

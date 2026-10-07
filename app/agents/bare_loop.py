@@ -56,6 +56,7 @@ async def run_bare_loop(
     """
     convo = list(messages)
     schema = _tools_to_openai_schema(tools)
+    last_text = ""  # 超步兜底：循环中每次 LLM 产出的非空文本
 
     for step in range(max_steps):
         resp = await client.post(
@@ -69,6 +70,7 @@ async def run_bare_loop(
         if not tool_calls:  # 模型不再要工具 → 收敛出答案
             return msg.get("content") or ""
 
+        last_text = msg.get("content") or last_text  # 记录已有最佳文本（超步兜底）
         convo.append(msg)  # 把「要工具」的 assistant 消息记进对话
         for tc in tool_calls:
             name = tc["function"]["name"]
@@ -82,5 +84,5 @@ async def run_bare_loop(
                 }
             )
 
-    logger.warning("bare loop hit max_steps=%s, returning last content", max_steps)
-    return convo[-1].get("content") or ""  # 停止条件：超步时给已有最佳文本
+    logger.warning("bare loop hit max_steps=%s, returning last text", max_steps)
+    return last_text  # 停止条件：超步时给已有最佳文本（非工具 JSON）

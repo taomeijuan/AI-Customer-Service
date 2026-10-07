@@ -89,7 +89,7 @@ def _make_workflow(session_factory, classifier_intent="物流", retriever=None, 
         agent_node=agent or _FakeAgent(),
         intent_classifier=_FakeClassifier(classifier_intent),
         session_factory=session_factory,
-        settings=SimpleNamespace(retrieval_low_conf_threshold=0.45, agent_max_steps=6, token_budget=4000),
+
     )
 
 
@@ -102,7 +102,6 @@ def _make_app(session_factory, db_session, classifier_intent="物流", retriever
             llm=agent_llm,
             tools=agent_tools,
             settings=SimpleNamespace(agent_max_steps=8),
-            session_factory=session_factory,
             checkpointer=InMemorySaver(),
         )
     app.state.workflow = _make_workflow(
@@ -241,7 +240,6 @@ async def test_subgraph_tokens_streamed_as_deltas(session_factory, db_session):
         llm=ScriptedModel(steps=["Agent 已查明"]),
         tools=[_order_stub()],
         settings=SimpleNamespace(agent_max_steps=6),
-        session_factory=session_factory,
         checkpointer=InMemorySaver(),
     )
     app.state.workflow = _make_workflow(

@@ -68,7 +68,6 @@ def build_workflow(
     agent_node: Any,  # async callable(state) -> {"final_text", "messages", "evidence"}
     intent_classifier: Any,  # async classify(query) -> IntentName
     session_factory: Any | None,
-    settings: Any,
     checkpointer: Any | None = None,
 ):
     """组装工作流图。agent_node 由 build_agent_node 产出（create_react_agent 子图包装）。"""

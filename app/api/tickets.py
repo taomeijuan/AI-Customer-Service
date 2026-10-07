@@ -14,7 +14,7 @@ router = APIRouter()
 
 class TicketRequest(BaseModel):
     conversation_id: int
-    description: str = Field(min_length=1)
+    description: str = Field(min_length=1, max_length=500)
     ticket_type: Literal["售后", "投诉", "咨询"] = Field(
         default="售后", description="工单类型"
     )
@@ -23,6 +23,11 @@ class TicketRequest(BaseModel):
 @router.post("/api/tickets")
 async def create_ticket(req: TicketRequest, request: Request) -> dict:
     async with request.app.state.session_factory() as session:
+        from app.repositories.conversations import ConversationsRepo
+
+        conv = await ConversationsRepo(session).get(req.conversation_id)
+        if conv is None:
+            raise HTTPException(status_code=404, detail="会话不存在")
         try:
             ticket_no = await TicketsRepo(session).create(
                 conversation_id=req.conversation_id,
