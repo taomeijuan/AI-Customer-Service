@@ -12,55 +12,36 @@
     --bubble-bot: #ffffff;
     --bubble-user: linear-gradient(135deg, #ff7043, #ff5722);
     --text: #26282c;
-    --text-dim: #9aa0a8;
+    --dim: #9aa0a8;
     --radius: 14px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
+    background: var(--bg); color: var(--text); height: 100vh;
+    display: flex; flex-direction: column;
   }
   header {
     background: linear-gradient(135deg, #ff7043, #ff5722);
-    color: #fff;
-    padding: 14px 20px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    box-shadow: 0 2px 8px rgba(255, 87, 34, .25);
-    z-index: 10;
+    color: #fff; padding: 14px 20px;
+    display: flex; align-items: center; gap: 12px;
+    box-shadow: 0 2px 8px rgba(255,87,34,.25); z-index: 10;
   }
   .avatar {
     width: 40px; height: 40px; border-radius: 50%;
     background: rgba(255,255,255,.2);
     display: flex; align-items: center; justify-content: center;
-    font-size: 22px;
-    flex-shrink: 0;
+    font-size: 22px; flex-shrink: 0;
   }
   header h1 { font-size: 17px; font-weight: 600; }
   header .status { font-size: 12px; opacity: .85; display: flex; align-items: center; gap: 5px; margin-top: 2px; }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: #b9f6ca; box-shadow: 0 0 4px #b9f6ca; }
   header .new-chat {
-    margin-left: auto;
-    background: rgba(255,255,255,.18);
-    border: 1px solid rgba(255,255,255,.5);
-    color: #fff;
-    border-radius: 8px;
-    padding: 6px 12px;
-    font-size: 12.5px;
-    cursor: pointer;
+    margin-left: auto; background: rgba(255,255,255,.18);
+    border: 1px solid rgba(255,255,255,.5); color: #fff;
+    border-radius: 8px; padding: 6px 12px; font-size: 12.5px; cursor: pointer;
   }
-  header .new-chat:hover { background: rgba(255,255,255,.3); }
-  #chat {
-    flex: 1;
-    overflow-y: auto;
-    padding: 20px 16px 8px;
-    scroll-behavior: smooth;
-  }
+  #chat { flex: 1; overflow-y: auto; padding: 20px 16px 8px; scroll-behavior: smooth; }
   .row { display: flex; gap: 10px; margin-bottom: 16px; align-items: flex-start; }
   .row.user { flex-direction: row-reverse; }
   .row .avatar {
@@ -69,12 +50,8 @@
   }
   .row.user .avatar { background: var(--brand-soft); border-color: #ffd9cc; }
   .bubble {
-    max-width: 72%;
-    padding: 10px 14px;
-    border-radius: var(--radius);
-    font-size: 14.5px;
-    line-height: 1.65;
-    word-break: break-word;
+    max-width: 72%; padding: 10px 14px; border-radius: var(--radius);
+    font-size: 14.5px; line-height: 1.65; word-break: break-word;
     box-shadow: 0 1px 2px rgba(0,0,0,.06);
   }
   .row.bot  .bubble { background: var(--bubble-bot); border-top-left-radius: 4px; }
@@ -85,102 +62,60 @@
   .tools { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
   .chip {
     display: inline-flex; align-items: center; gap: 4px;
-    font-size: 11.5px;
-    background: var(--brand-soft);
-    color: #d84315;
-    border: 1px solid #ffd0bf;
-    border-radius: 999px;
-    padding: 2px 9px;
+    font-size: 11.5px; background: var(--brand-soft); color: #d84315;
+    border: 1px solid #ffd0bf; border-radius: 999px; padding: 2px 9px;
   }
   .chip.running { animation: pulse 1s infinite; }
   .chip.fail { background: #fff1f0; color: #cf1322; border-color: #ffccc7; }
   @keyframes pulse { 50% { opacity: .45; } }
   .typing { display: inline-flex; gap: 4px; padding: 4px 2px; }
   .typing i {
-    width: 6px; height: 6px; border-radius: 50%;
-    background: var(--text-dim);
+    width: 6px; height: 6px; border-radius: 50%; background: var(--dim);
     animation: bounce 1.2s infinite;
   }
   .typing i:nth-child(2) { animation-delay: .15s; }
   .typing i:nth-child(3) { animation-delay: .3s; }
   @keyframes bounce { 0%,60%,100% { transform: translateY(0); opacity:.4 } 30% { transform: translateY(-4px); opacity:1 } }
-  footer {
-    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
-    background: #fff;
-    border-top: 1px solid #ececec;
-    display: flex;
-    gap: 10px;
+  .options-bar { display: flex; gap: 8px; margin-top: 8px; }
+  .options-bar button {
+    border: 1px solid var(--brand); background: #fff; color: var(--brand);
+    border-radius: 8px; padding: 5px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
   }
-  #input {
-    flex: 1;
-    border: 1px solid #e3e5e8;
-    border-radius: 10px;
-    padding: 11px 14px;
-    font-size: 14.5px;
-    font-family: inherit;
-    outline: none;
-    resize: none;
-    max-height: 120px;
-    line-height: 1.5;
-    transition: border-color .2s;
-  }
-  #input:focus { border-color: var(--brand); }
-  #send {
-    border: none;
-    background: var(--brand);
-    color: #fff;
-    border-radius: 10px;
-    padding: 0 22px;
-    font-size: 15px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: opacity .2s;
-  }
-  #send:disabled { opacity: .45; cursor: not-allowed; }
-  .hint { text-align: center; font-size: 11px; color: var(--text-dim); padding: 6px 0 10px; }
-  sup.cite {
-    color: var(--brand);
-    cursor: pointer;
-    font-weight: 700;
-    font-size: 11px;
-    padding: 0 2px;
-  }
+  .options-bar button:disabled { opacity: .5; cursor: not-allowed; }
+  sup.cite { color: var(--brand); cursor: pointer; font-weight: 700; font-size: 11px; padding: 0 2px; }
   sup.cite:hover { text-decoration: underline; }
   .cite-detail {
-    margin-top: 8px;
-    padding: 8px 10px;
-    background: var(--brand-soft);
-    border-left: 3px solid var(--brand);
-    border-radius: 6px;
-    font-size: 12.5px;
+    margin-top: 8px; padding: 8px 10px; background: var(--brand-soft);
+    border-left: 3px solid var(--brand); border-radius: 6px; font-size: 12.5px;
   }
   .cite-path { color: #d84315; font-weight: 600; margin-bottom: 4px; }
   .cite-q { font-weight: 600; margin-bottom: 2px; }
   .cite-a { color: #5d4037; }
   .feedback { display: flex; gap: 6px; margin-top: 8px; align-items: center; }
   .feedback button {
-    border: 1px solid #e3e5e8;
-    background: #fff;
-    border-radius: 8px;
-    padding: 3px 10px;
-    font-size: 13px;
-    cursor: pointer;
+    border: 1px solid #e3e5e8; background: #fff;
+    border-radius: 8px; padding: 3px 10px; font-size: 13px; cursor: pointer;
   }
   .feedback button:hover { border-color: var(--brand); }
   .feedback button.on { background: var(--brand-soft); border-color: var(--brand); }
-  .feedback .done-tip { font-size: 11.5px; color: var(--text-dim); }
-  .options-bar { display: flex; gap: 8px; margin-top: 8px; }
-  .options-bar button {
-    border: 1px solid var(--brand);
-    background: #fff;
-    color: var(--brand);
-    border-radius: 8px;
-    padding: 5px 14px;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
+  .feedback .done-tip { font-size: 11.5px; color: var(--dim); }
+  footer {
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+    background: #fff; border-top: 1px solid #ececec;
+    display: flex; gap: 10px;
   }
-  .options-bar button:disabled { opacity: .5; cursor: not-allowed; }
+  #input {
+    flex: 1; border: 1px solid #e3e5e8; border-radius: 10px;
+    padding: 11px 14px; font-size: 14.5px; font-family: inherit;
+    outline: none; resize: none; max-height: 120px; line-height: 1.5;
+  }
+  #input:focus { border-color: var(--brand); }
+  #send {
+    border: none; background: var(--brand); color: #fff;
+    border-radius: 10px; padding: 0 22px; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  #send:disabled { opacity: .45; cursor: not-allowed; }
+  .hint { text-align: center; font-size: 11px; color: var(--dim); padding: 6px 0 10px; }
 </style>
 </head>
 <body>
@@ -192,36 +127,29 @@
   </div>
   <button class="new-chat" id="newChat">新会话</button>
 </header>
-
 <div id="chat">
   <div class="row bot">
     <div class="avatar">🛍️</div>
     <div class="bubble">你好呀～我是商城小助手，可以查订单、物流、商品，也能答售后政策。问点什么？😊</div>
   </div>
 </div>
-
 <footer>
   <textarea id="input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
   <button id="send">发送</button>
 </footer>
-<div class="hint">ch02 · 工具数据为演示造数；对话与工单已落库</div>
+<div class="hint">ch05 · Workflow 编排 · 对话/工单/知识检索已落库</div>
 
 <script>
 const chat = document.getElementById('chat');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('send');
 const statusText = document.getElementById('statusText');
-const newChatBtn = document.getElementById('newChat');
+document.getElementById('newChat');
 
-// ── 会话与用户身份（localStorage，DB 为真源，刷新/重开都续上）──
 const uidKey = 'cs_user_id_v1', convKey = 'cs_conversation_id_v2';
 let userId = localStorage.getItem(uidKey);
-if (!userId) {
-  userId = crypto.randomUUID();
-  localStorage.setItem(uidKey, userId);
-}
+if (!userId) { userId = crypto.randomUUID(); localStorage.setItem(uidKey, userId); }
 let conversationId = JSON.parse(localStorage.getItem(convKey) || 'null');
-
 let streaming = false;
 
 function scrollBottom() { chat.scrollTop = chat.scrollHeight; }
@@ -239,7 +167,6 @@ function addRow(role) {
   return bubble;
 }
 
-// 最小 Markdown：先转义再渲染 **粗体** 和 `代码`，防注入
 function renderMd(el, text) {
   const esc = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   el.innerHTML = esc
@@ -248,17 +175,14 @@ function renderMd(el, text) {
     .replace(/\n/g, '<br>');
 }
 
-// 带引用角标的渲染：[n] 转成可点上标，点击展开来源原文
 function renderAnswer(el, text, citations) {
   renderMd(el, text);
   if (!citations || !citations.length) return;
-  const quote = (m, n) => {
-    const c = citations.find((x) => x.n === Number(n));
-    if (!c) return m;
-    return `<sup class="cite" data-n="${c.n}">[${c.n}]</sup>`;
-  };
-  el.innerHTML = el.innerHTML.replace(/\[(\d+)\]/g, quote);
-  el.querySelectorAll('sup.cite').forEach((sup) => {
+  el.innerHTML = el.innerHTML.replace(/\[(\d+)\]/g, (m, n) => {
+    const c = citations.find(x => x.n === Number(n));
+    return c ? `<sup class="cite" data-n="${c.n}">[${c.n}]</sup>` : m;
+  });
+  el.querySelectorAll('sup.cite').forEach(sup => {
     sup.addEventListener('click', () => showCitation(el, citations, Number(sup.dataset.n)));
   });
 }
@@ -267,13 +191,12 @@ function showCitation(el, citations, n) {
   const old = el.querySelector('.cite-detail');
   if (old && old.dataset.n === String(n)) { old.remove(); return; }
   if (old) old.remove();
-  const c = citations.find((x) => x.n === n);
+  const c = citations.find(x => x.n === n);
   if (!c) return;
   const card = document.createElement('div');
   card.className = 'cite-detail';
   card.dataset.n = String(n);
   card.innerHTML = '<div class="cite-path"></div><div class="cite-q"></div><div class="cite-a"></div>';
-  // section_path/question 可能含对话挖掘的用户原话，一律 textContent 防 XSS（评审 M5）
   card.querySelector('.cite-path').textContent = `📂 ${c.section_path}`;
   card.querySelector('.cite-q').textContent = c.question;
   card.querySelector('.cite-a').textContent = c.answer;
@@ -284,16 +207,43 @@ function addToolChip(bubble, name, running) {
   const chips = bubble.querySelector('.tools');
   const chip = document.createElement('span');
   chip.className = 'chip' + (running ? ' running' : '');
-  chip.textContent = `🔧 ${name} · ${running ? '查询中' : '完成'}`;  // 工具名来自模型，禁用 innerHTML 防 XSS
+  chip.textContent = `🔧 ${name} · ${running ? '查询中' : '完成'}`;
   chips.appendChild(chip);
   return chip;
 }
 
-// ── 投诉可选项：转人工（前端模拟）/建工单（直写端点）——两个独立按钮，互不绑定 ──
+function addFeedback(bubble, answerText) {
+  const bar = document.createElement('div');
+  bar.className = 'feedback';
+  let h = 0;
+  for (let i = 0; i < answerText.length; i++) { h = (h * 31 + answerText.charCodeAt(i)) >>> 0; }
+  const key = `${conversationId}:${h}`;
+  const saved = localStorage.getItem('cs_fb_' + key);
+  const up = document.createElement('button');
+  up.textContent = '👍 有帮助';
+  const down = document.createElement('button');
+  down.textContent = '👎 没帮助';
+  const tip = document.createElement('span');
+  tip.className = 'done-tip';
+  function lock(choice) {
+    up.disabled = down.disabled = true;
+    up.classList.toggle('on', choice === 'up');
+    down.classList.toggle('on', choice === 'down');
+    tip.textContent = '已反馈';
+    localStorage.setItem('cs_fb_' + key, choice);
+  }
+  if (saved) lock(saved);
+  else {
+    up.addEventListener('click', () => lock('up'));
+    down.addEventListener('click', () => lock('down'));
+  }
+  bar.append(up, down, tip);
+  bubble.appendChild(bar);
+}
+
 function addOptionsButtons(bubble, options, complaintText) {
   const bar = document.createElement('div');
   bar.className = 'options-bar';
-  let acted = false;  // 点了其中一个后另一个仍可用，但每个按钮只生效一次
   for (const opt of options) {
     const btn = document.createElement('button');
     btn.textContent = opt;
@@ -309,58 +259,19 @@ function addOptionsButtons(bubble, options, complaintText) {
         fetch('/api/tickets', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            conversation_id: conversationId,
-            description: complaintText,
-            ticket_type: '投诉',
-          }),
+          body: JSON.stringify({ conversation_id: conversationId, description: complaintText, ticket_type: '投诉' }),
         })
-          .then((r) => r.json())
-          .then((body) => {
+          .then(r => r.json())
+          .then(body => {
             const row = addRow('bot');
-            row.querySelector('.text').textContent =
-              `✅ 工单已创建（${body.ticket_no}），人工客服会尽快联系您`;
+            row.querySelector('.text').textContent = `✅ 工单已创建（${body.ticket_no}），人工客服会尽快联系您`;
             scrollBottom();
           })
-          .catch(() => {
-            btn.disabled = false;
-          });
+          .catch(() => { btn.disabled = false; });
       }
     });
     bar.appendChild(btn);
   }
-  bubble.appendChild(bar);
-}
-
-// ── 满意度反馈：一次性锁定，纯前端采集（ch09 数据飞轮入口）──
-function addFeedback(bubble, answerText) {
-  const bar = document.createElement('div');
-  bar.className = 'feedback';
-  // 键 = 会话 + 回答内容指纹：页面刷新后消息序号重排不会错配（评审 minor 6）
-  let h = 0;
-  for (let i = 0; i < answerText.length; i++) { h = (h * 31 + answerText.charCodeAt(i)) >>> 0; }
-  const msgKey = `${conversationId}:${h}`;
-  const saved = localStorage.getItem('cs_fb_' + msgKey);
-  const up = document.createElement('button');
-  up.textContent = '👍 有帮助';
-  const down = document.createElement('button');
-  down.textContent = '👎 没帮助';
-  const tip = document.createElement('span');
-  tip.className = 'done-tip';
-
-  function lock(choice) {
-    up.disabled = down.disabled = true;
-    up.classList.toggle('on', choice === 'up');
-    down.classList.toggle('on', choice === 'down');
-    tip.textContent = '已反馈';
-    localStorage.setItem('cs_fb_' + msgKey, choice);
-  }
-  if (saved) { lock(saved); }
-  else {
-    up.addEventListener('click', () => lock('up'));
-    down.addEventListener('click', () => lock('down'));
-  }
-  bar.append(up, down, tip);
   bubble.appendChild(bar);
 }
 
@@ -379,8 +290,8 @@ async function send() {
 
   addRow('user').querySelector('.text').textContent = message;
   const botBubble = addRow('bot');
-  botBubble.querySelector('.text').innerHTML =
-    '<span class="typing"><i></i><i></i><i></i></span>';
+  const textEl = botBubble.querySelector('.text');
+  textEl.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
   setBusy(true);
 
   try {
@@ -389,7 +300,7 @@ async function send() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ conversation_id: conversationId, message, user_id: userId }),
     });
-    if (resp.status === 404) {  // 会话过期：清掉本地 id 重开
+    if (resp.status === 404) {
       conversationId = null;
       localStorage.removeItem(convKey);
       throw new Error('会话已过期，请重新发送');
@@ -398,14 +309,14 @@ async function send() {
 
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
-    let buffer = '', firstToken = true, textEl = botBubble.querySelector('.text');
+    let buffer = '', firstToken = true, raw = '';
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
       const blocks = buffer.split('\n\n');
-      buffer = blocks.pop();                    // 留半截给下一轮
+      buffer = blocks.pop();
       for (const block of blocks) {
         let event = 'message', data = '';
         for (const line of block.split('\n')) {
@@ -431,54 +342,43 @@ async function send() {
             }
           }
           scrollBottom();
+        } else if (event === 'options') {
+          addOptionsButtons(botBubble, payload.options || [], message);
         } else if (event === 'delta') {
           if (firstToken) { textEl.textContent = ''; firstToken = false; }
-          const raw = (textEl.dataset.raw || '') + payload.text;
-          textEl.dataset.raw = raw;
+          raw += payload.text;
           renderMd(textEl, raw);
           scrollBottom();
         } else if (event === 'error') {
           textEl.textContent = '';
           botBubble.classList.add('error');
           renderMd(textEl, payload.message || '服务暂时不可用');
-        } else if (event === 'options') {
-          // 投诉路径：渲染「转人工」「建工单」两个独立按钮，不自动执行
-          addOptionsButtons(botBubble, payload.options || [], message);
         } else if (event === 'done') {
-          const raw = textEl.dataset.raw || '';
-          delete textEl.dataset.raw;
           const citations = payload.citations || [];
-          if (citations.length) {
-            renderAnswer(textEl, raw, citations);  // [n] 转可点角标
-          } else {
-            renderMd(textEl, raw);
-          }
-          addFeedback(botBubble, raw);  // 内容指纹作锁定键
+          if (citations.length) renderAnswer(textEl, raw, citations);
+          addFeedback(botBubble, raw);
         }
       }
     }
   } catch (err) {
-    const textEl = botBubble.querySelector('.text');
     if (textEl.querySelector('.typing')) textEl.textContent = '';
     botBubble.classList.add('error');
     textEl.textContent = `⚠️ ${err.message || '网络异常，请稍后重试'}`;
   } finally {
     setBusy(false);
-    statusText.textContent = '在线 · 为你服务';
     input.focus();
     scrollBottom();
   }
 }
 
-newChatBtn.addEventListener('click', () => {
+document.getElementById('newChat').addEventListener('click', () => {
   if (streaming) return;
   conversationId = null;
   localStorage.removeItem(convKey);
   location.reload();
 });
-
 sendBtn.addEventListener('click', send);
-input.addEventListener('keydown', (e) => {
+input.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
 });
 input.addEventListener('input', () => {
