@@ -180,8 +180,9 @@ function renderAnswer(el, text, citations) {
   renderMd(el, text);
   if (!citations || !citations.length) return;
   el.innerHTML = el.innerHTML.replace(/\[(\d+)\]/g, (m, n) => {
-    const c = citations.find(x => x.n === Number(n));
-    return c ? `<sup class="cite" data-n="${c.n}">[${c.n}]</sup>` : m;
+    const c = citations.find(x => x.n === Number(n)) || citations[citations.length - 1];
+    if (!c) return m;
+    return `<sup class="cite" data-n="${c.n}">[${c.n}]</sup>`;
   });
   el.querySelectorAll('sup.cite').forEach(sup => {
     sup.addEventListener('click', () => showCitation(el, citations, Number(sup.dataset.n)));
