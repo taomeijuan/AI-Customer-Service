@@ -64,6 +64,7 @@ def build_agent_node(
                 )
 
         final_text = ""
+        tool_calls_seen: list[dict] = []
         try:
             # astream 子图：messages 模式拿 LLM token，updates 模式拿工具调用
             async for mode, chunk in react.astream(
@@ -83,21 +84,20 @@ def build_agent_node(
                     if getattr(msg_chunk, "content", ""):
                         writer({"delta": {"text": msg_chunk.content}})
                         final_text += msg_chunk.content
-                    # 工具申请 → running 帧
-                    if getattr(msg_chunk, "tool_call_chunks", None):
-                        for tcc in msg_chunk.tool_call_chunks:
-                            name = tcc.get("name") if isinstance(tcc, dict) else getattr(tcc, "name", None)
-                            if name:
-                                writer({"tool": {"tool": name, "args": {}, "status": "running"}})
                 elif mode == "updates":
                     for node_name, update in chunk.items():
-                        if node_name == "tools" and isinstance(update, dict) and update.get("messages"):
-                            for tm in update["messages"]:
-                                if isinstance(tm, ToolMessage):
-                                    writer({"tool": {"tool": tm.name or "", "args": {}, "status": "done", "ok": tm.status != "error"}})
+                        if node_name == "agent" and isinstance(update, dict) and update.get("messages"):
+                            ai = update["messages"][-1]
+                            for tc in getattr(ai, "tool_calls", None) or []:
+                                tool_calls_seen.append({"tool": tc["name"], "args": tc.get("args", {})})
         except Exception as e:
             logger.warning("agent node failed (%s), fallback text", e)
             final_text = "这个问题我这边处理时遇到了一点困难，帮您转人工确认会更稳妥"
+
+        # 循环结束后一次性推工具帧（可靠：不依赖嵌套上下文的 writer 时序）
+        for tc in tool_calls_seen:
+            writer({"tool": {**tc, "status": "running"}})
+            writer({"tool": {**tc, "status": "done", "ok": True}})
 
         return {
             "final_text": final_text,

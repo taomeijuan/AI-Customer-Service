@@ -218,7 +218,6 @@ function addFeedback(bubble, answerText) {
   let h = 0;
   for (let i = 0; i < answerText.length; i++) { h = (h * 31 + answerText.charCodeAt(i)) >>> 0; }
   const key = `${conversationId}:${h}`;
-  const saved = localStorage.getItem('cs_fb_' + key);
   const up = document.createElement('button');
   up.textContent = '👍 有帮助';
   const down = document.createElement('button');
@@ -230,13 +229,9 @@ function addFeedback(bubble, answerText) {
     up.classList.toggle('on', choice === 'up');
     down.classList.toggle('on', choice === 'down');
     tip.textContent = '已反馈';
-    localStorage.setItem('cs_fb_' + key, choice);
   }
-  if (saved) lock(saved);
-  else {
     up.addEventListener('click', () => lock('up'));
     down.addEventListener('click', () => lock('down'));
-  }
   bar.append(up, down, tip);
   bubble.appendChild(bar);
 }
