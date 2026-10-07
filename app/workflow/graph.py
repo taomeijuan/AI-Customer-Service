@@ -100,10 +100,12 @@ def build_workflow(
         ]
         # 知识条目以 [n] 编号消息注入 Agent（要求回答带角标引用）
         knowledge = "\n\n".join(f"[{c['n']}] {c['question']}：{c['answer']}" for c in citations)
+        from langchain.messages import SystemMessage
+
         return {
             "evidence": citations,
             "refusal": False,
-            "messages": [{"role": "system", "content": f"已检索到以下相关知识条目，回答时引用角标：\n{knowledge}"}],
+            "messages": [SystemMessage(f"已检索到以下相关知识条目，回答时必须用 [n] 角标引用：\n{knowledge}")],
         }
 
     async def fallback(state: WorkflowState) -> dict:
