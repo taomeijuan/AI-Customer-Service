@@ -83,35 +83,22 @@ async def chat_stream(
             subgraphs=True,
         ):
             ns, mode, data = _normalize_chunk(chunk)
-            if mode == "messages":
-                msg_chunk, meta = data
-                node = meta.get("langgraph_node", "")
-                # 只透传 ReAct Agent 节点的 token（意图识别的 LLM 不上屏）
-                if node == "agent" and getattr(msg_chunk, "content", ""):
+            if mode == "custom":
+                # agent_node get_stream_writer 推流：delta/tool 帧 + log 节点产出
+                if "delta" in (data or {}):
                     deltas += 1
-                    yield ServerSentEvent(event="delta", data={"text": msg_chunk.content})
-                # 工具帧：ToolMessage → done；AIMessageChunk.tool_call_chunks → running
-                if isinstance(msg_chunk, ToolMessage):
-                    yield ServerSentEvent(
-                        event="tool",
-                        data={"tool": msg_chunk.name or "", "args": {}, "status": "done", "ok": msg_chunk.status != "error"},
-                    )
-                elif node == "agent" and getattr(msg_chunk, "tool_call_chunks", None):
-                    for tcc in msg_chunk.tool_call_chunks:
-                        name = tcc.get("name") if isinstance(tcc, dict) else getattr(tcc, "name", None)
-                        if name:
-                            yield ServerSentEvent(
-                                event="tool",
-                                data={"tool": name, "args": {}, "status": "running"},
-                            )
+                    yield ServerSentEvent(event="delta", data=data["delta"])
+                if "tool" in (data or {}):
+                    yield ServerSentEvent(event="tool", data=data["tool"])
+                for k in ("final_text", "citations", "options"):
+                    if k in (data or {}):
+                        final_payload[k] = data[k]
             elif mode == "updates":
                 for node_name, update in (data or {}).items():
                     if not isinstance(update, dict):
                         continue
                     if ns == () and node_name == "comfort" and update.get("options"):
                         yield ServerSentEvent(event="options", data={"options": update["options"]})
-            elif mode == "custom":
-                final_payload.update(data or {})
     except Exception:
         logger.exception("workflow failed, conversation_id=%s", conversation_id)
         yield ServerSentEvent(event="error", data={"message": "服务暂时不可用，请稍后重试"})
