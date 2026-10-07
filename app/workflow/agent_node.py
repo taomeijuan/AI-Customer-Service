@@ -1,4 +1,7 @@
-"""主力 Agent 节点：create_react_agent + get_stream_writer 实时推 delta + tool 帧累积。"""
+"""主力 Agent 节点：create_react_agent + 结果提取（tool 帧 + citations + 最终回答）。
+
+策略：react.ainvoke 一次拿到完整结果 → 提取工具帧和 citations → api 层切片补流式。
+"""
 
 import json
 import logging
@@ -8,8 +11,6 @@ from langchain.messages import HumanMessage, SystemMessage, ToolMessage
 from langgraph.config import get_stream_writer
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.prebuilt import create_react_agent
-
-from app.generation.prompts import GENERATION_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ AGENT_SYSTEM_PROMPT = """你是"商城小助手"，一家电商平台的智能�
 1. 语气礼貌、简洁、口语化，单次回复不超过 200 字。
 2. 需要订单、商品、物流的实时数据时，调用对应查询工具；工具返回的数据可以如实转述给用户。
 3. 对话历史里用户已经说过的信息，直接引用作答，这不属于编造。
-4. 如果知识条目（[n] 编号）被注入到对话中，回答时用 [n] 角标引用来源。
+4. 回答中引用工具返回的数据时，在句末标注来源 [n]（n 从 1 开始按引用顺序编号）。
 5. 涉及退款金额、投诉升级等超出工具能力的问题，建议用户转人工或建工单。
 6. 绝不承诺知识条目和工具结果以外的到账时间、价格、库存、赔偿金额。
 7. 与电商无关的问题，礼貌说明并引导回购物话题。"""
@@ -61,62 +62,55 @@ def build_agent_node(
                     SystemMessage(m["content"]) if m.get("role") == "system" else HumanMessage(m["content"])
                 )
 
-        final_text = ""
-        tool_calls_acc: dict[int, dict] = {}  # index → 累积的 tool call
+        evidence = list(state.get("evidence", []))  # 知识类路径的检索证据（如果有）
 
         try:
-            async for msg_chunk, _meta in react.astream(
+            result = await react.ainvoke(
                 {"messages": injected + [HumanMessage(state["query"])]},
                 config={
                     "configurable": {"thread_id": thread_id},
                     "recursion_limit": settings.agent_max_steps,
                 },
-                stream_mode="messages",
-            ):
-                if isinstance(msg_chunk, ToolMessage):
-                    continue  # 工具结果不算 LLM token
+            )
+            msgs = result["messages"]
 
-                # 累积 tool_call_chunks → 完整 tool_calls
-                for tcc in getattr(msg_chunk, "tool_call_chunks", None) or []:
-                    idx = (tcc.get("index", 0) if isinstance(tcc, dict) else getattr(tcc, "index", 0)) or 0
-                    slot = tool_calls_acc.setdefault(idx, {"name": "", "args": "", "id": ""})
-                    if isinstance(tcc, dict):
-                        if tcc.get("name"):
-                            slot["name"] = tcc["name"]
-                        if tcc.get("id"):
-                            slot["id"] = tcc["id"]
-                        slot["args"] += tcc.get("args", "") or ""
-                    else:
-                        if getattr(tcc, "name", None):
-                            slot["name"] = tcc.name
-                        if getattr(tcc, "id", None):
-                            slot["id"] = tcc.id
-                        slot["args"] += getattr(tcc, "args", "") or ""
+            # 提取最终回答（最后一条有内容的 AIMessage）
+            final_text = ""
+            for m in reversed(msgs):
+                if isinstance(m, ToolMessage):
+                    continue
+                if hasattr(m, "tool_calls") and m.tool_calls:
+                    continue  # 跳过工具申请消息
+                if hasattr(m, "content") and m.content:
+                    final_text = m.content
+                    break
 
-                # LLM token → delta 实时推流
-                if getattr(msg_chunk, "content", ""):
-                    writer({"delta": {"text": msg_chunk.content}})
-                    final_text += msg_chunk.content
+            # 提取 ToolMessage → 作为 evidence 条目（可点击引用）+ tool 帧
+            n = len(evidence)  # 知识类证据编号延续
+            for m in msgs:
+                if isinstance(m, ToolMessage):
+                    n += 1
+                    evidence.append({
+                        "n": n,
+                        "chunk_id": -n,  # 负数 = 工具结果（非知识 chunk）
+                        "section_path": f"工具调用/{m.name or 'tool'}",
+                        "question": state["query"],
+                        "answer": m.content[:500],
+                    })
+
+            # 提取 AIMessage.tool_calls → 推 tool 帧
+            for m in msgs:
+                for tc in getattr(m, "tool_calls", None) or []:
+                    writer({"tool": {"tool": tc["name"], "args": tc.get("args", {}), "status": "done", "ok": True}})
 
         except Exception as e:
-            logger.warning("agent node stream failed (%s), fallback", e)
+            logger.warning("agent node failed (%s), fallback text", e)
             final_text = "这个问题我这边处理时遇到了一点困难，帮您转人工确认会更稳妥"
-
-        # 流结束后：从累积的 tool_call_chunks 重组完整 tool_calls，推工具帧
-        for idx in sorted(tool_calls_acc):
-            tc = tool_calls_acc[idx]
-            if not tc["name"]:
-                continue
-            try:
-                args = json.loads(tc["args"]) if tc["args"] else {}
-            except (json.JSONDecodeError, TypeError):
-                args = {}
-            writer({"tool": {"tool": tc["name"], "args": args, "status": "done", "ok": True}})
 
         return {
             "final_text": final_text,
             "messages": [],
-            "evidence": state.get("evidence", []),
+            "evidence": evidence,
         }
 
     return agent_node
