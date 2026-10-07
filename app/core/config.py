@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     rrf_k: int = 60
     retrieval_low_conf_threshold: float = 0.45
     faq_tool_timeout: float = 30.0  # RAG 链（改写+混合检索+精排+生成）专用预算
+    agent_max_steps: int = 6  # ReAct 循环步数/token 消耗上限（ch05）
 
 
 @lru_cache

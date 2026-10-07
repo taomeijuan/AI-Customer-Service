@@ -33,14 +33,19 @@ def build_agent_node(
     )
 
     async def agent_node(state: dict) -> dict:
+        from langchain_core.messages import BaseMessage
+
         cid = state.get("conversation_id")
         turn = state.get("turn", 1)
         thread_id = f"{cid}:{turn}"
-        injected = [
-            SystemMessage(m["content"]) if m.get("role") == "system" else HumanMessage(m["content"])
-            for m in (state.get("messages") or [])
-            if m.get("content")
-        ]
+        injected: list = []
+        for m in state.get("messages") or []:
+            if isinstance(m, BaseMessage):
+                injected.append(m)  # 已是 LC 消息（历史/知识注入）
+            elif isinstance(m, dict) and m.get("content"):
+                injected.append(
+                    SystemMessage(m["content"]) if m.get("role") == "system" else HumanMessage(m["content"])
+                )
         try:
             result = await react.ainvoke(
                 {"messages": injected + [HumanMessage(state["query"])]},

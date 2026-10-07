@@ -7,8 +7,9 @@ from langchain.messages import HumanMessage
 from app.core.llm import get_chat_model
 from app.generation.answerer import AnswerOutcome
 from app.knowledge.retriever import RetrievalResult
+from langchain.tools import tool
+
 from app.tools.ecommerce import query_logistics, query_order, query_product
-from app.tools.faq import build_query_faq_tool
 from app.tools.ticket import build_create_ticket_tool
 
 SAMPLES = Path(__file__).parent / "data" / "tool_routing_samples.jsonl"

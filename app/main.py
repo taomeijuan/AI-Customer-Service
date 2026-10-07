@@ -4,7 +4,6 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.agents.orchestrator import Orchestrator
 from app.api.chat import router as chat_router
 from app.api.extract import router as extract_router
 from app.api.rag_eval import router as rag_eval_router
@@ -14,41 +13,20 @@ from app.db.engine import build_engine
 from app.extraction.schemas import AfterSalesExtraction
 from app.extraction.service import ExtractionService, build_structured_model
 from app.generation.answerer import AnswerSchema, Answerer
+from langgraph.checkpoint.memory import InMemorySaver
 from fastapi.responses import FileResponse
 from app.knowledge.embedder import build_embedder
 from app.knowledge.query_rewriter import LangChainRewriter
 from app.knowledge.reranker import build_reranker
-from app.knowledge.retriever import HybridRetriever
 from app.knowledge.milvus_store import LazyMilvusStore
-from app.tools.base import ToolRegistry
+from app.knowledge.retriever import HybridRetriever
+from app.workflow.agent_node import build_agent_node
+from app.workflow.graph import build_workflow
+from app.workflow.intent import LangChainIntentClassifier
 from app.tools.ecommerce import query_logistics, query_order, query_product
-from app.tools.faq import build_query_faq_tool
 from app.tools.ticket import build_create_ticket_tool
 
 STATIC_DIR = Path(__file__).parent / "static"
-
-
-def build_registry(
-    session,
-    conversation_id: int,
-    settings,
-    retriever,
-    answerer,
-) -> ToolRegistry:
-    """请求级工具注册表：mock 三件套全局可用，faq/工单工具绑请求会话。"""
-    reg = ToolRegistry(
-        default_timeout=settings.tool_timeout, default_retries=settings.tool_retries
-    )
-    reg.register(query_order)
-    reg.register(query_product)
-    reg.register(query_logistics)
-    # M1：RAG 链（改写+混合检索+精排+生成）远超 3s，单列超时；超时重试会旁路质控，必须给足
-    reg.register(
-        build_query_faq_tool(session, retriever, answerer, settings, conversation_id),
-        timeout=settings.faq_tool_timeout,
-    )
-    reg.register(build_create_ticket_tool(session, conversation_id))
-    return reg
 
 
 def create_app() -> FastAPI:
@@ -82,13 +60,18 @@ def create_app() -> FastAPI:
     app.state.retriever = retriever
     app.state.answerer = Answerer(build_structured_model(model, AnswerSchema))
 
-    app.state.orchestrator = Orchestrator(
-        model=model,
-        registry_factory=lambda session, cid: build_registry(
-            session, cid, settings, retriever, app.state.answerer
-        ),
+    agent_node = build_agent_node(
+        llm=model,
+        tools=[query_order, query_product, query_logistics],  # ch02 业务工具；知识类由图检索节点承担
+        settings=settings,
+    )
+    app.state.workflow = build_workflow(
+        retriever=retriever,
+        agent_node=agent_node,
+        intent_classifier=LangChainIntentClassifier(model),
         session_factory=app.state.session_factory,
         settings=settings,
+        checkpointer=InMemorySaver(),
     )
 
     @app.get("/healthz")

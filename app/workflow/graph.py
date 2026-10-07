@@ -11,6 +11,7 @@ import logging
 from typing import Any, Literal, TypedDict
 
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from typing_extensions import Annotated
@@ -129,6 +130,14 @@ def build_workflow(
     async def log(state: WorkflowState) -> dict:
         text = state.get("final_text", "")
         logger.info("workflow done: intent=%s path=%s len=%d", state.get("intent"), "gate-fallback" if state.get("refusal") else state.get("intent"), len(text))
+        writer = get_stream_writer()  # custom 流：api 层从这里拿 final_text/citations/options
+        writer(
+            {
+                "final_text": text,
+                "citations": state.get("evidence", []),
+                "options": state.get("options", []),
+            }
+        )
         if session_factory is not None and state.get("conversation_id"):
             async with session_factory() as session:
                 from langchain.messages import AIMessage, HumanMessage
