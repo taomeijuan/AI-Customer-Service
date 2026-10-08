@@ -1,6 +1,6 @@
 """ReAct Agent 子图测试：create_react_agent 接线、多步工具、知识注入、步数上限。"""
 import pytest
-from langchain.messages import AIMessage, ToolMessage
+from langchain.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.language_models import BaseChatModel
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
@@ -102,6 +102,49 @@ async def test_knowledge_injection(session_factory, db_session):
     system_like = [m for m in sent if "7天无理由" in str(getattr(m, "content", ""))]
     assert system_like  # 知识注入可见
     assert out["final_text"] == "按[1]的政策回答"
+
+
+@pytest.mark.usefixtures("db_session")
+async def test_business_turn_force_prompt_injected(session_factory, db_session):
+    """业务类（订单/物流/售后）本轮注入强制工具指令，且是用户问题前最后一条 system。
+
+    回归背景：长历史会话里模型会直接抄历史答案跳过工具 → 0 工具帧、陈旧 [n] 死文本。
+    """
+    llm = _make_llm([(("query_order", {"order_no": "1001"})), "final"])
+    node = _node(llm, _settings(6), session_factory)
+    out = await node(
+        {"query": "订单1001到哪里了", "messages": [], "conversation_id": 1, "turn": 1, "intent": "物流"}
+    )
+    sent = llm.invocations[0]
+    # 最后一条是用户 HumanMessage，其前一条是强制指令
+    assert isinstance(sent[-1], HumanMessage)
+    assert "本轮强制要求" in sent[-2].content
+    assert "两步都做" in sent[-2].content
+    assert out["final_text"] == "final"
+
+
+@pytest.mark.usefixtures("db_session")
+async def test_stale_citations_stripped_from_history_only(session_factory, db_session):
+    """历史 AI 回答的旧 [n] 剥离；本轮知识注入的 [n] 保留（那是本轮可点引用的编号）。"""
+    llm = _make_llm(["收到"])
+    node = _node(llm, _settings(6), session_factory)
+    history = [AIMessage("上次答案：圆通速递 [3]，已签收 [3] 请确认")]
+    knowledge = {"role": "system", "content": "已检索到相关知识：\n[1] 退货政策：7天无理由"}
+    await node(
+        {
+            "query": "退货政策",
+            "messages": history + [knowledge],
+            "conversation_id": 1,
+            "turn": 1,
+            "intent": "退款退货",
+        }
+    )
+    sent = llm.invocations[0]
+    history_msg = [m for m in sent if isinstance(m, AIMessage) and m.content.startswith("上次答案")]
+    assert history_msg, "历史消息应仍在注入中"
+    assert "[3]" not in history_msg[0].content and "圆通速递" in history_msg[0].content
+    knowledge_msg = [m for m in sent if "7天无理由" in str(getattr(m, "content", ""))]
+    assert "[1]" in knowledge_msg[0].content  # 本轮知识注入角标不动
 
 
 @pytest.mark.usefixtures("db_session")

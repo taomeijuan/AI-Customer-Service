@@ -5,6 +5,7 @@
 
 import json
 import logging
+import re
 from typing import Any
 
 from langchain.messages import HumanMessage, SystemMessage, ToolMessage
@@ -13,6 +14,23 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.prebuilt import create_react_agent
 
 logger = logging.getLogger(__name__)
+
+# 业务数据类问题（订单/物流/售后）本轮强制指令：模型在长历史会话里会「抄历史答案
+# 跳过工具」，导致 0 工具帧、陈旧 [n] 角标变成死文本。本轮指令是最近一条 system
+# 消息，优先级高于骨架 prompt。ch05 验收标准第 1 条：提订单号必须两步都查。
+BUSINESS_TURN_PROMPT = (
+    "【本轮强制要求】本轮属于订单/物流/售后实时数据查询，必须调用工具获取最新数据后再作答："
+    "用户提到订单号时先调用 query_order 查订单状态、再调用 query_logistics 查物流轨迹，两步都做。"
+    "即使对话历史里已有相似问题的答案，也必须重新调用工具核实，禁止直接抄历史答案或编造数据。"
+)
+
+# 陈旧角标：历史 AI 回答里的 [n] 只属于当时的轮次，本轮没有对应证据。
+# 不剥掉的话模型会把旧编号直接抄进新答案，前端拿到 citations 对不上 → 死文本。
+_CITE_RE = re.compile(r"\[\d+\]")
+
+
+def _strip_stale_citations(text: str) -> str:
+    return _CITE_RE.sub("", text)
 
 AGENT_SYSTEM_PROMPT = """你是"商城小助手"，一家电商平台的智能客服，可以调用工具查询实时数据。
 
@@ -57,8 +75,18 @@ def build_agent_node(
         thread_id = f"{cid}:{turn}"
 
         injected: list = []
+        from langchain.messages import AIMessage
+
         for m in state.get("messages") or []:
             if isinstance(m, BaseMessage):
+                # 剥掉历史 AI 回答的陈旧 [n]（当前轮次的知识注入 SystemMessage 不动）
+                if (
+                    isinstance(m, AIMessage)
+                    and not m.tool_calls
+                    and isinstance(m.content, str)
+                    and _CITE_RE.search(m.content)
+                ):
+                    m = m.model_copy(update={"content": _strip_stale_citations(m.content)})
                 injected.append(m)
             elif isinstance(m, dict) and m.get("content"):
                 injected.append(
@@ -66,6 +94,10 @@ def build_agent_node(
                 )
 
         evidence = list(state.get("evidence", []))  # 知识类路径的检索证据（如果有）
+
+        # 业务数据类：本轮强制工具指令紧跟用户问题上游（长历史防抄写）
+        if state.get("intent") in ("物流", "订单", "售后"):
+            injected.append(SystemMessage(BUSINESS_TURN_PROMPT))
 
         try:
             result = await react.ainvoke(
