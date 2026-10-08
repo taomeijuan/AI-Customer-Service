@@ -1,6 +1,13 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 

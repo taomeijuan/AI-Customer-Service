@@ -137,11 +137,16 @@
   <textarea id="input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
   <button id="send">发送</button>
 </footer>
-<div class="hint">ch05 · Workflow 编排 · 对话/工单/知识检索已落库 · 前端 v2026-10-08b</div>
+<div class="hint" id="diag">ch05 · Workflow 编排 · 前端 v2026-10-08c · 等待消息…</div>
 
 <script>
-console.log('🖥️ 前端版本 v2026-10-08b；收到的每条 SSE 事件会打印 📡，消息收尾会打印 🔍 工具计数');
-window.onerror = function(msg, src, line) { console.error('💥 JS Error:', msg, 'line', line); };
+console.log('🖥️ 前端版本 v2026-10-08c');
+const diag = document.getElementById('diag');
+const stats = { meta: 0, tool: [], delta: 0, citations: -1, errors: '' };
+function paintDiag() {
+  diag.textContent = `前端 v2026-10-08c · meta ${stats.meta} · tool ${stats.tool.length}${stats.tool.length ? '(' + stats.tool.join(',') + ')' : ''} · delta ${stats.delta} · citations ${stats.citations === -1 ? '—' : stats.citations}${stats.errors ? ' · ⚠️ ' + stats.errors : ''}`;
+}
+window.onerror = function(msg, src, line) { stats.errors = msg + ' @' + line; paintDiag(); console.error('💥 JS Error:', msg, 'line', line); };
 const chat = document.getElementById('chat');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('send');
@@ -327,8 +332,10 @@ async function send() {
         if (event === 'meta') {
           conversationId = payload.conversation_id;
           localStorage.setItem(convKey, JSON.stringify(conversationId));
+          stats.meta++; paintDiag();
         } else if (event === 'tool') {
           toolCount++;
+          stats.tool.push(payload.tool); paintDiag();
           if (payload.status === 'running') {
             addToolChip(botBubble, payload.tool, true);
             statusText.textContent = `正在调用 ${payload.tool}…`;
@@ -348,6 +355,7 @@ async function send() {
         } else if (event === 'delta') {
           if (firstToken) { textEl.textContent = ''; firstToken = false; }
           raw += payload.text;
+          stats.delta++; paintDiag();
           renderMd(textEl, raw);
           scrollBottom();
         } else if (event === 'error') {
@@ -356,6 +364,7 @@ async function send() {
           renderMd(textEl, payload.message || '服务暂时不可用');
         } else if (event === 'done') {
           const citations = payload.citations || [];
+          stats.citations = citations.length; paintDiag();
           if (citations.length) renderAnswer(textEl, raw, citations);
           addFeedback(botBubble, raw);
           console.log('🔍 本次收到 tool 事件:', toolCount, '条');

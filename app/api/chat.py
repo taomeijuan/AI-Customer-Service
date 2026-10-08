@@ -1,3 +1,4 @@
+import json
 import logging
 from collections.abc import AsyncIterable
 from typing import Annotated
@@ -74,7 +75,14 @@ async def chat_stream(
 
     deltas = 0
     final_payload: dict = {}
-    yield ServerSentEvent(event="meta", data={"conversation_id": conversation_id})
+
+    def emit(event: str, data: dict) -> ServerSentEvent:
+        """统一出口：每个 SSE 帧落一行日志（serve.sh 终端可见，排查前端帧诊断）"""
+        preview = json.dumps(data, ensure_ascii=False)[:160]
+        logger.info("[sse] cid=%s event=%s data=%s", conversation_id, event, preview)
+        return ServerSentEvent(event=event, data=data)
+
+    yield emit("meta", {"conversation_id": conversation_id})
     try:
         async for chunk in workflow.astream(
             inputs,
@@ -87,9 +95,9 @@ async def chat_stream(
                 # agent_node get_stream_writer 推流：delta/tool 帧 + log 节点产出
                 if "delta" in (data or {}):
                     deltas += 1
-                    yield ServerSentEvent(event="delta", data=data["delta"])
+                    yield emit("delta", data["delta"])
                 if "tool" in (data or {}):
-                    yield ServerSentEvent(event="tool", data=data["tool"])
+                    yield emit("tool", data["tool"])
                 for k in ("final_text", "citations", "options"):
                     if k in (data or {}):
                         final_payload[k] = data[k]
@@ -98,19 +106,19 @@ async def chat_stream(
                     if not isinstance(update, dict):
                         continue
                     if ns == () and node_name == "comfort" and update.get("options"):
-                        yield ServerSentEvent(event="options", data={"options": update["options"]})
+                        yield emit("options", {"options": update["options"]})
     except Exception:
         logger.exception("workflow failed, conversation_id=%s", conversation_id)
-        yield ServerSentEvent(event="error", data={"message": "服务暂时不可用，请稍后重试"})
+        yield emit("error", {"message": "服务暂时不可用，请稍后重试"})
         return
 
     # 固定话术路径（兜底/投诉/闲聊）没有 LLM token：补切片 delta 保逐字效果
     final_text = final_payload.get("final_text", "")
     if deltas == 0 and final_text:
         for i in range(0, len(final_text), 3):
-            yield ServerSentEvent(event="delta", data={"text": final_text[i : i + 3]})
+            yield emit("delta", {"text": final_text[i : i + 3]})
 
     done_data: dict = {"conversation_id": conversation_id}
     if final_payload.get("citations"):
         done_data["citations"] = final_payload["citations"]
-    yield ServerSentEvent(event="done", data=done_data)
+    yield emit("done", done_data)
