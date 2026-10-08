@@ -306,7 +306,7 @@ async function send() {
 
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
-    let buffer = '', firstToken = true, raw = '';
+    let buffer = '', firstToken = true, raw = '', toolCount = 0;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -327,6 +327,7 @@ async function send() {
           conversationId = payload.conversation_id;
           localStorage.setItem(convKey, JSON.stringify(conversationId));
         } else if (event === 'tool') {
+          toolCount++;
           if (payload.status === 'running') {
             addToolChip(botBubble, payload.tool, true);
             statusText.textContent = `正在调用 ${payload.tool}…`;
@@ -356,6 +357,7 @@ async function send() {
           const citations = payload.citations || [];
           if (citations.length) renderAnswer(textEl, raw, citations);
           addFeedback(botBubble, raw);
+          console.log('🔍 本次收到 tool 事件:', toolCount, '条');
         }
       }
     }
