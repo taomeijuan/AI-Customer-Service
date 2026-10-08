@@ -331,13 +331,14 @@ async function send() {
             addToolChip(botBubble, payload.tool, true);
             statusText.textContent = `正在调用 ${payload.tool}…`;
           } else {
-            const chips = botBubble.querySelectorAll('.chip.running');
-            const chip = chips[chips.length - 1];
-            if (chip) {
-              chip.classList.remove('running');
-              chip.textContent = `🔧 ${payload.tool} · ${payload.ok ? '完成' : '失败'}`;
-              if (!payload.ok) chip.classList.add('fail');
-            }
+            // done 帧：优先更新已有 running chip，否则直接创建（ch05 只发 done 帧）
+            let chip = null;
+            const running = botBubble.querySelectorAll('.chip.running');
+            if (running.length) chip = running[running.length - 1];
+            else chip = addToolChip(botBubble, payload.tool, false);
+            chip.classList.remove('running');
+            chip.textContent = `🔧 ${payload.tool} · ${payload.ok ? '完成' : '失败'}`;
+            if (!payload.ok) chip.classList.add('fail');
           }
           scrollBottom();
         } else if (event === 'options') {
