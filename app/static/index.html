@@ -137,9 +137,10 @@
   <textarea id="input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
   <button id="send">发送</button>
 </footer>
-<div class="hint">ch05 · Workflow 编排 · 对话/工单/知识检索已落库</div>
+<div class="hint">ch05 · Workflow 编排 · 对话/工单/知识检索已落库 · 前端 v2026-10-08b</div>
 
 <script>
+console.log('🖥️ 前端版本 v2026-10-08b；收到的每条 SSE 事件会打印 📡，消息收尾会打印 🔍 工具计数');
 window.onerror = function(msg, src, line) { console.error('💥 JS Error:', msg, 'line', line); };
 const chat = document.getElementById('chat');
 const input = document.getElementById('input');

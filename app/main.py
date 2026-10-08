@@ -87,6 +87,18 @@ def create_app() -> FastAPI:
     app.include_router(rag_eval_router)
     app.include_router(tickets_router)
     app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
+
+    @app.middleware("http")
+    async def no_cache_front_page(request, call_next):
+        """前端页面禁缓存：每次加载都取最新 js（浏览器启发式缓存曾导致旧版逻辑被杀）。
+        API 响应不动——只对 HTML 页面生效。"""
+        resp = await call_next(request)
+        if request.url.path in ("/", "/index.html") and resp.status_code == 200:
+            resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            resp.headers["Pragma"] = "no-cache"
+            resp.headers["Expires"] = "0"
+        return resp
+
     return app
 
 
