@@ -1,3 +1,12 @@
+"""ch02 业务工具：模拟实时数据（ch05.6 起为确定性假数据）。
+
+真实性约定：不接 MySQL、不再每调随机。同一订单号/商品名用稳定种子
+（md5 派生，跨进程一致）生成同一套数据——同一会话内重复询问、不同
+会话的引用卡片，答案永远对得上。时间是种子派生的固定锚点，不随调用
+时刻漂移。
+"""
+
+import hashlib
 import random
 from datetime import datetime, timedelta
 
@@ -17,45 +26,59 @@ _LOGISTICS_NODES = [
 _CITIES = ["杭州", "上海", "广州", "成都", "武汉", "北京"]
 
 
+def _seeded_rng(key: str, salt: str) -> random.Random:
+    """同一 (salt, key) 永远得到同一把随机种子。md5 派生，进程间一致。"""
+    digest = hashlib.md5(f"{salt}:{key}".encode("utf-8")).digest()
+    return random.Random(int.from_bytes(digest[:8], "big"))
+
+
+def _anchor_dt(rng: random.Random) -> datetime:
+    """种子派生的固定时间锚点：假数据的创建时间/轨迹时刻不随调用时间漂移。"""
+    return datetime(2026, 9, 1) + timedelta(
+        days=rng.randint(0, 40), hours=rng.randint(0, 23), minutes=rng.randint(0, 59)
+    )
+
+
 @tool
 def query_order(order_no: str) -> dict:
     """查询用户订单的状态、商品、金额等信息。当用户询问订单相关问题时调用。"""
+    rng = _seeded_rng(str(order_no), "order")
     return {
         "order_no": order_no,
-        "status": random.choice(_ORDER_STATUS),
-        "product": random.choice(_PRODUCTS),
-        "amount": round(random.uniform(29, 2999), 2),
-        "created_at": (
-            datetime.now() - timedelta(days=random.randint(0, 10))
-        ).strftime("%Y-%m-%d %H:%M"),
+        "status": rng.choice(_ORDER_STATUS),
+        "product": rng.choice(_PRODUCTS),
+        "amount": round(rng.uniform(29, 2999), 2),
+        "created_at": _anchor_dt(rng).strftime("%Y-%m-%d %H:%M"),
     }
 
 
 @tool
 def query_product(product_name: str) -> dict:
     """查询商品的实时价格、库存和促销信息。当用户询问商品问题时调用。"""
+    rng = _seeded_rng(str(product_name), "product")
     return {
         "product": product_name,
-        "price": round(random.uniform(49, 1999), 2),
-        "stock": random.randint(0, 500),
-        "promo": random.choice(_PROMOS),
+        "price": round(rng.uniform(49, 1999), 2),
+        "stock": rng.randint(0, 500),
+        "promo": rng.choice(_PROMOS),
     }
 
 
 @tool
 def query_logistics(order_no: str) -> dict:
     """查询订单的物流承运公司与轨迹节点。当用户询问快递、物流、到哪了时调用。"""
-    now = datetime.now()
-    n = random.randint(3, 5)
+    rng = _seeded_rng(str(order_no), "logistics")
+    anchor = _anchor_dt(rng)
+    n = rng.randint(3, 5)
     return {
         "order_no": order_no,
-        "carrier": random.choice(_CARRIERS),
-        "tracking_no": f"SF{random.randint(10**13, 10**14 - 1)}",
+        "carrier": rng.choice(_CARRIERS),
+        "tracking_no": f"SF{rng.randint(10**13, 10**14 - 1)}",
         "traces": [
             {
-                "time": (now - timedelta(hours=3 * (n - i))).strftime("%m-%d %H:%M"),
-                "desc": random.choice(_LOGISTICS_NODES).format(
-                    city=random.choice(_CITIES)
+                "time": (anchor - timedelta(hours=3 * (n - i))).strftime("%m-%d %H:%M"),
+                "desc": rng.choice(_LOGISTICS_NODES).format(
+                    city=rng.choice(_CITIES)
                 ),
             }
             for i in range(n)
