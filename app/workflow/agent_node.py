@@ -20,7 +20,10 @@ AGENT_SYSTEM_PROMPT = """你是"商城小助手"，一家电商平台的智能�
 
 行为约束：
 1. 语气礼貌、简洁、口语化，单次回复不超过 200 字。
-2. 需要订单、商品、物流的实时数据时，调用对应查询工具；工具返回的数据可以如实转述给用户。
+2. 需要实时数据时调用对应查询工具：
+   - 用户提到具体订单号（如 1001）→ 必须先调用 query_order 查订单状态，再调用 query_logistics 查物流轨迹（两步都做）。
+   - 只问商品信息 → 调用 query_product。
+   - 工具返回的数据可以如实转述给用户。
 3. 对话历史里用户已经说过的信息，直接引用作答，这不属于编造。
 4. 回答中引用工具返回的数据时，在句末标注来源 [n]（n 从 1 开始按引用顺序编号）。
 5. 涉及退款金额、投诉升级等超出工具能力的问题，建议用户转人工或建工单。
@@ -102,6 +105,18 @@ def build_agent_node(
             for m in msgs:
                 for tc in getattr(m, "tool_calls", None) or []:
                     writer({"tool": {"tool": tc["name"], "args": tc.get("args", {}), "status": "done", "ok": True}})
+
+            # 提取 ToolMessage → 工具结果加入 citations（使 [n] 可点击）
+            for m in msgs:
+                if isinstance(m, ToolMessage):
+                    n += 1
+                    evidence.append({
+                        "n": n,
+                        "chunk_id": -n,
+                        "section_path": f"工具调用/{m.name or 'tool'}",
+                        "question": state["query"],
+                        "answer": m.content[:500],
+                    })
 
         except Exception as e:
             logger.warning("agent node failed (%s), fallback text", e)
