@@ -86,7 +86,7 @@ def make(milvus, rewriter=None, reranker=None):
                 "hybrid_candidates": 50,
                 "rrf_k": 60,
                 "rerank_top_n": 3,
-                "retrieval_low_conf_threshold": 0.45,
+                "retrieval_low_conf_threshold": 0.25,
             },
         )(),
     )
@@ -140,3 +140,28 @@ async def test_low_confidence_flag_when_all_scores_low():
     retriever = make(milvus, reranker=LowScoreReranker())
     result = await retriever.retrieve("邮费", strategy="hybrid_rerank")
     assert result.low_confidence is True  # top1 精排分低于阈值 → 检索侧拒答信号
+
+
+async def test_gate_boundary_around_rerank_threshold():
+    """闸阈值 0.25 标定：正确相关答案（0.26-0.35 档）放行，弱相关（0.23）拒。
+
+    回归背景：阈值沿用 ch03 COSINE 尺度的 0.45 时，bge-reranker-v2-m3 的
+    正确命中（实测 0.25~0.35）全部误判低置信，知识路径被整体误拒。
+    """
+
+    class ScoreReranker(FakeReranker):
+        def __init__(self, score):
+            self.score = score
+
+        async def rerank(self, query, evidences, top_n):
+            for e in evidences[:top_n]:
+                e.score = self.score
+            return evidences[:top_n], True
+
+    milvus_pass = FakeMilvus(hybrid_hits=[(1, 0.001)])
+    r_pass = make(milvus_pass, reranker=ScoreReranker(0.26))
+    assert (await r_pass.retrieve("退货政策", strategy="hybrid_rerank")).low_confidence is False
+
+    milvus_reject = FakeMilvus(hybrid_hits=[(1, 0.001)])
+    r_reject = make(milvus_reject, reranker=ScoreReranker(0.23))
+    assert (await r_reject.retrieve("退货政策", strategy="hybrid_rerank")).low_confidence is True

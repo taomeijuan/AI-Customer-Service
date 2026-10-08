@@ -33,7 +33,10 @@ class Settings(BaseSettings):
     rerank_top_n: int = 10
     hybrid_candidates: int = 50
     rrf_k: int = 60
-    retrieval_low_conf_threshold: float = 0.45
+    # rerank relevance 标定（2026-10-08 实测 SiliconFlow/bge-reranker-v2-m3）：
+    # 无关≈0.00；弱相关 0.19–0.23；正确相关 0.25–0.35；明显相关 ≥0.45。
+    # 故此闸默认 0.25（区别于 ch03 COSINE 尺度的 0.45，两把尺子不可混用）。
+    retrieval_low_conf_threshold: float = 0.25
     faq_tool_timeout: float = 30.0  # RAG 链（改写+混合检索+精排+生成）专用预算
     agent_max_steps: int = 6  # ReAct 循环步数/token 消耗上限（ch05）
 
