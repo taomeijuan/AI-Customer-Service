@@ -45,7 +45,6 @@ async def test_tool_routing_sample(session_factory, db_session, sample):
         query_order,
         query_product,
         query_logistics,
-        build_query_faq_tool(db_session, _FakeRetriever(), _FakeAnswerer(), s, conversation_id=1),
         build_create_ticket_tool(db_session, conversation_id=1),  # 占位 cid，不执行
     ]
     model = get_chat_model().bind_tools(tools)

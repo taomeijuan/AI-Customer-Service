@@ -106,18 +106,6 @@ def build_agent_node(
                 for tc in getattr(m, "tool_calls", None) or []:
                     writer({"tool": {"tool": tc["name"], "args": tc.get("args", {}), "status": "done", "ok": True}})
 
-            # 提取 ToolMessage → 工具结果加入 citations（使 [n] 可点击）
-            for m in msgs:
-                if isinstance(m, ToolMessage):
-                    n += 1
-                    evidence.append({
-                        "n": n,
-                        "chunk_id": -n,
-                        "section_path": f"工具调用/{m.name or 'tool'}",
-                        "question": state["query"],
-                        "answer": m.content[:500],
-                    })
-
         except Exception as e:
             logger.warning("agent node failed (%s), fallback text", e)
             final_text = "这个问题我这边处理时遇到了一点困难，帮您转人工确认会更稳妥"
