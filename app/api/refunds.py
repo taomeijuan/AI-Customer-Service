@@ -19,7 +19,7 @@ class RefundRequest(BaseModel):
     conversation_id: int
     order_no: str = Field(min_length=1, max_length=32)
     reason_category: ReasonCategory = Field(description="退款原因固定类目")
-    amount: float = Field(gt=0, description="退款金额")
+    amount: float = Field(gt=0, le=99999999.99, description="退款金额（decimal(10,2) 上限内）")
 
 
 @router.post("/api/refunds")

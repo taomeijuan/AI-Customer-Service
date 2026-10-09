@@ -86,20 +86,36 @@ async def chat_stream(
     session_factory = request.app.state.session_factory
 
     pending: dict = getattr(request.app.state, "pending_resumes", {})
+    counters: dict = getattr(request.app.state, "turn_counters", {})
+    claimed: str | None = None  # resume 占用凭据（评审 M4 claim 语义）
+    claim_failed = False
+    reinterrupted = False  # m2：resume 流自身再中断，登记已就地重建，勿再清理
+    stream_ok = False
     if req.resume is not None:
         # ch06 槽位恢复：从中断点续跑（检查点里存着原始 query/turn，历史不重载）
-        thread_id = pending.get(conversation_id)  # check_resume_pending 已保证存在
-        inputs = Command(resume=req.resume)
-        config = {
-            "configurable": {"thread_id": thread_id},
-            "recursion_limit": settings.agent_max_steps + 4,
-        }
+        # 评审 M4：pop 即占用——并发第二个 resume 拿空走错误帧；失败由 finally 回填
+        claimed = pending.pop(conversation_id, None)
+        if claimed is None:
+            claim_failed = True
+            inputs = config = None
+        else:
+            inputs = Command(resume=req.resume)
+            config = {
+                "configurable": {"thread_id": claimed},
+                "recursion_limit": settings.agent_max_steps + 4,
+            }
     else:
+        # 评审 M2：新消息=放弃挂起的点选流程（清登记，防旧线程劫持新语义）
+        pending.pop(conversation_id, None)
         # 历史从 MySQL 真源加载（分工制：checkpointer 只管轮内）
         async with session_factory() as session:
             history = await MessagesRepo(session).load_history(conversation_id)
         trimmed = trim_history_groups(history, budget_tokens=settings.token_budget)
-        turn = len(history) + 1  # 单调递增，奇偶不碰撞
+        # 评审 M2：轮次不能按消息条数回算——中断轮不落库会撞挂起线程的 thread_id，
+        # langgraph 拿新输入重跑被中断节点。进程内单调计数器兜底（与 InMemorySaver
+        # 同生命周期；重启两者一起清零，行为自洽）。
+        turn = max(counters.get(conversation_id, 0), len(history)) + 1
+        counters[conversation_id] = turn
         inputs = {
             "query": req.message,
             "messages": trimmed,
@@ -129,6 +145,9 @@ async def chat_stream(
         return ServerSentEvent(event=event, data=data)
 
     yield emit("meta", {"conversation_id": conversation_id})
+    if claim_failed:
+        yield emit("error", {"message": "该会话没有待恢复的流程，请直接发消息"})
+        return
     try:
         async for chunk in workflow.astream(
             inputs,
@@ -173,6 +192,7 @@ async def chat_stream(
                         value = getattr(item, "value", None)
                         if isinstance(value, dict) and value.get("type") == "order_selector":
                             pending[conversation_id] = config["configurable"]["thread_id"]
+                            reinterrupted = True  # m2：登记已重建，本流末尾不清
                             yield emit(
                                 "order_selector",
                                 {"orders": value.get("orders", []), "question": value.get("question", "")},
@@ -185,16 +205,24 @@ async def chat_stream(
                             while hold:
                                 deltas += 1
                                 yield emit("delta", {"text": hold.pop(0)})
-                        elif (
-                            isinstance(update, dict)
-                            and node_name == "comfort"
-                            and update.get("options")
-                        ):
-                            yield emit("options", {"options": update["options"]})
+                        elif isinstance(update, dict) and update.get("options"):
+                            # 评审 M1：options 帧泛化——comfort 与 refund_prep
+                            # 任一节点更新带 options 即发（原只认 comfort，
+                            # 「申请退款」永远到不了前端）
+                            frame: dict = {"options": update["options"]}
+                            if update.get("order_brief"):
+                                frame["order"] = update["order_brief"]
+                            yield emit("options", frame)
+        stream_ok = True  # 流完整跑完（成功或走到 fallback/log）
     except Exception:
         logger.exception("workflow failed, conversation_id=%s", conversation_id)
         yield emit("error", {"message": "服务暂时不可用，请稍后重试"})
         return
+    finally:
+        # 评审 M4：流被异常/断连掐断的 resume——回填登记让用户可重试；
+        # 正常跑完或再次中断的不回填（前者已消费，后者已重建登记）
+        if claimed is not None and not stream_ok and not reinterrupted:
+            pending[conversation_id] = claimed
 
     while hold:  # 兜底冲刷：流结束仍有滞留 token
         deltas += 1
@@ -210,9 +238,6 @@ async def chat_stream(
     if final_payload.get("citations"):
         done_data["citations"] = final_payload["citations"]
     yield emit("done", done_data)
-
-    if req.resume is not None:
-        pending.pop(conversation_id, None)  # 恢复跑完，清除槽位登记
 
     logger.info(
         "stream done: cid=%s deltas=%d tool_frames=%d citations=%d",

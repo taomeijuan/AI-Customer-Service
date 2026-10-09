@@ -156,3 +156,27 @@ async def test_log_node_persists_messages(session_factory, db_session):
     ).scalars().all()
     assert [r.role for r in rows] == ["user", "assistant"]
     assert rows[0].content == "订单1001的物流" and rows[1].content == "回答内容"
+
+
+@pytest.mark.usefixtures("db_session")
+async def test_intent_low_conf_records_to_pool(session_factory, db_session):
+    """评审 M5 回归：意图置信度低于阈值必须真实落池（Enum 漂移曾静默吞掉）。"""
+    from app.workflow.intent import ClassifyOutcome
+
+    class _LowConfClassifier:
+        async def classify_detail(self, query):
+            return ClassifyOutcome(intent="其他", confidence=0.3)
+
+        async def classify(self, query):
+            return "其他"
+
+    cid = await _ensure_conv(session_factory)
+    graph = build_workflow(
+        retriever=FakeRetriever(RetrievalResult(evidences=[], low_confidence=False)),
+        agent_node=FakeAgent(),
+        intent_classifier=_LowConfClassifier(),
+        session_factory=session_factory,
+    )
+    await graph.ainvoke({"query": "帮我看看那个单子", "messages": [], "conversation_id": cid})
+    rows = await LowConfidenceRepo(db_session).list_by_source("intent_low_conf")
+    assert any(r.raw_question == "帮我看看那个单子" for r in rows)

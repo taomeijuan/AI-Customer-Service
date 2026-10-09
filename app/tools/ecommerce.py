@@ -69,12 +69,6 @@ def query_order(order_no: str) -> dict:
 
 
 @tool
-def list_orders() -> dict:
-    """列出当前用户可操作的订单摘要（订单号/商品/金额/状态）。用户想退款但没说订单号时，用于展示订单选择器。"""
-    return {"orders": orders_summary()}
-
-
-@tool
 def query_product(product_name: str) -> dict:
     """查询商品的实时价格、库存和促销信息。当用户询问商品问题时调用。"""
     rng = _seeded_rng(str(product_name), "product")

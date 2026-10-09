@@ -437,3 +437,89 @@ async def test_order_selector_interrupt_and_resume(session_factory, db_session):
         assert done2["citations"][0]["chunk_id"] == 21
         deltas2 = [v["text"] for e, v in ev2 if e == "delta"]
         assert "".join(deltas2) == "订单 1001 可以退 [1]"
+
+
+async def test_resume_options_frame_carries_order(session_factory, db_session):
+    """评审 M1 回归：refund_prep 的 options 更新必须发 options 帧（含订单摘要）。"""
+    from langgraph.checkpoint.memory import InMemorySaver as _Saver
+
+    async def _refund_with_options(state):
+        return {
+            "order_no": "1001",
+            "refusal": False,
+            "evidence": [],
+            "options": ["申请退款"],
+            "order_brief": {"order_no": "1001", "product": "扫地机器人", "amount": 2749.83},
+            "messages": [],
+        }
+
+    app = create_app()
+    app.state.session_factory = session_factory
+    app.state.workflow = build_workflow(
+        retriever=_FakeRetriever(RetrievalResult(evidences=[], low_confidence=False)),
+        agent_node=_FakeAgent(text="可以退"),
+        intent_classifier=_FakeClassifier("退款退货"),
+        session_factory=session_factory,
+        refund_prep=_refund_with_options,
+        checkpointer=_Saver(),
+    )
+    async with _client(app) as c:
+        resp = await c.post(
+            "/api/chat/stream",
+            json={"user_id": "u1", "message": "订单1001能退吗", "conversation_id": None},
+        )
+    frames = [v for e, v in sse_events(resp.text) if e == "options"]
+    assert frames and frames[0]["options"] == ["申请退款"]
+    assert frames[0]["order"]["order_no"] == "1001"
+    assert frames[0]["order"]["amount"] == 2749.83
+
+
+async def test_abandoned_selector_not_hijacked(session_factory, db_session):
+    """评审 M2 回归：中断轮后发新消息，不得复用挂起线程（不弹旧选择器、正常走闲聊）。"""
+    from langgraph.checkpoint.memory import InMemorySaver as _Saver
+    from langgraph.types import interrupt as _interrupt
+
+    def _selector_prep(state):
+        return _interrupt({"type": "order_selector", "orders": [{"order_no": "1001"}], "question": state["query"]})
+
+    class _IntentByQuery:
+        def __init__(self):
+            from app.workflow.intent import ClassifyOutcome
+            self._ClassifyOutcome = ClassifyOutcome
+
+        async def classify_detail(self, query):
+            intent = "退款退货" if "退" in query else "闲聊"
+            return self._ClassifyOutcome(intent=intent, confidence=0.9)
+
+        async def classify(self, query):
+            return (await self.classify_detail(query)).intent
+
+    app = create_app()
+    app.state.session_factory = session_factory
+    app.state.workflow = build_workflow(
+        retriever=_FakeRetriever(RetrievalResult(evidences=[], low_confidence=False)),
+        agent_node=_FakeAgent(text="x"),
+        intent_classifier=_IntentByQuery(),
+        session_factory=session_factory,
+        refund_prep=_selector_prep,
+        checkpointer=_Saver(),
+    )
+    async with _client(app) as c:
+        r1 = await c.post(
+            "/api/chat/stream",
+            json={"user_id": "u1", "message": "我要退款", "conversation_id": None},
+        )
+        kinds1 = [e for e, _ in sse_events(r1.text)]
+        assert "order_selector" in kinds1
+        cid = sse_events(r1.text)[0][1]["conversation_id"]
+
+        # 放弃点选，直接问「你好」：必须正常闲聊，不得再弹选择器
+        r2 = await c.post(
+            "/api/chat/stream",
+            json={"user_id": "u1", "message": "你好", "conversation_id": cid},
+        )
+        ev2 = sse_events(r2.text)
+        kinds2 = [e for e, _ in ev2]
+        assert "order_selector" not in kinds2, "新消息被挂起的旧选择器劫持"
+        deltas = "".join(v["text"] for e, v in ev2 if e == "delta")
+        assert deltas  # 闲聊话术正常流出

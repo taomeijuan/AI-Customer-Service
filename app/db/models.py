@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, Enum, ForeignKey, JSON, String, Text, func
+from sqlalchemy import BigInteger, Boolean, Enum, ForeignKey, JSON, Numeric, String, Text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -72,7 +72,7 @@ class RefundOrder(Base):
     reason_category: Mapped[str] = mapped_column(
         Enum("七天无理由", "质量问题", "少件", "与描述不符", "其他", name="refund_reason")
     )
-    amount: Mapped[float] = mapped_column()  # decimal(10,2)，MySQL 侧精度
+    amount: Mapped[float] = mapped_column(Numeric(10, 2))  # 对齐 DDL decimal(10,2)
     status: Mapped[str] = mapped_column(
         Enum("待审核", "已同意", "已拒绝", "已退款", name="refund_status"),
         default="待审核",
@@ -139,6 +139,7 @@ class LowConfidenceQuestion(Base):
             "retrieval_low_conf",
             "self_check",
             "user_feedback",
+            "intent_low_conf",  # ch06：与 db/init/06-ch06.sql ALTER 保持一致
             name="low_conf_source",
         )
     )

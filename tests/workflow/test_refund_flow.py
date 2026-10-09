@@ -69,7 +69,6 @@ def _make(classifier_intent="退款退货", retriever=None, expander=None, agent
     refund_prep = build_refund_prep(
         retriever=retriever,
         expander=expander or _StubExpander(),
-        session_factory=None,
     )
     agent = agent or _FakeAgent()
     wf = build_workflow(
@@ -146,3 +145,35 @@ async def test_refund_weak_evidence_falls_back():
     assert out["refusal"] is True
     assert "暂时没有足够的资料" in out["final_text"]
     assert agent.calls == []
+
+
+async def test_refund_regex_candidate_must_pass_whitelist():
+    """评审 M3：数字在白名单外（年份/金额）不得当订单号——照走选择器。"""
+    wf, agent, _ = _make()
+    out = await wf.ainvoke({"query": "1999 元那单能退吗", "messages": []}, config=CFG)
+    assert "__interrupt__" in out  # 1999 不在 1001-1005 → 提不到有效号 → 弹选择器
+
+
+async def test_resume_illegal_order_no_treated_as_cancel():
+    """评审 M3：resume 回传白名单外的单号按取消处理，绝不喂假数据生成器。"""
+    wf, agent, _ = _make()
+    await wf.ainvoke({"query": "这个能退吗", "messages": []}, config=CFG)
+    out = await wf.ainvoke(Command(resume={"order_no": "888888"}), config=CFG)
+    assert "先不继续" in out["final_text"]
+    assert agent.calls == []
+
+
+async def test_resume_order_brief_reaches_options_channel():
+    """options 帧载荷：order_brief 通道随 refund_prep 更新浮出（前端表单数据源）。"""
+    wf, _, _ = _make()
+    await wf.ainvoke({"query": "这个能退吗", "messages": []}, config=CFG)
+    async for chunk in wf.astream(
+        Command(resume={"order_no": "1001"}), config=CFG, stream_mode="updates"
+    ):
+        upd = chunk.get("refund_prep") if isinstance(chunk, dict) else None
+        if upd and "order_brief" in upd:
+            assert upd["order_brief"]["order_no"] == "1001"
+            assert upd["options"] == ["申请退款"]
+            break
+    else:
+        raise AssertionError("refund_prep 更新里没看到 order_brief/options")

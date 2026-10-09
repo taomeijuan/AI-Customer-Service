@@ -159,14 +159,14 @@
   <textarea id="input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
   <button id="send">发送</button>
 </footer>
-<div class="hint" id="diag">ch06 · 分流器正式版 · 前端 v2026-10-10a · 等待消息…</div>
+<div class="hint" id="diag">ch06 · 分流器正式版 · 前端 v2026-10-10b · 等待消息…</div>
 
 <script>
-console.log('🖥️ 前端版本 v2026-10-10a');
+console.log('🖥️ 前端版本 v2026-10-10b');
 const diag = document.getElementById('diag');
 const stats = { meta: 0, tool: [], delta: 0, citations: -1, errors: '' };
 function paintDiag() {
-  diag.textContent = `前端 v2026-10-10a · meta ${stats.meta} · tool ${stats.tool.length}${stats.tool.length ? '(' + stats.tool.join(',') + ')' : ''} · delta ${stats.delta} · citations ${stats.citations === -1 ? '—' : stats.citations}${stats.errors ? ' · ⚠️ ' + stats.errors : ''}`;
+  diag.textContent = `前端 v2026-10-10b · meta ${stats.meta} · tool ${stats.tool.length}${stats.tool.length ? '(' + stats.tool.join(',') + ')' : ''} · delta ${stats.delta} · citations ${stats.citations === -1 ? '—' : stats.citations}${stats.errors ? ' · ⚠️ ' + stats.errors : ''}`;
 }
 window.onerror = function(msg, src, line) { stats.errors = msg + ' @' + line; paintDiag(); console.error('💥 JS Error:', msg, 'line', line); };
 const chat = document.getElementById('chat');
@@ -268,7 +268,7 @@ function addFeedback(bubble, answerText) {
   bubble.appendChild(bar);
 }
 
-function addOptionsButtons(bubble, options, contextText) {
+function addOptionsButtons(bubble, options, contextText, order) {
   const bar = document.createElement('div');
   bar.className = 'options-bar';
   for (const opt of options) {
@@ -296,7 +296,7 @@ function addOptionsButtons(bubble, options, contextText) {
           })
           .catch(() => { btn.disabled = false; });
       } else if (opt === '申请退款') {
-        addRefundForm(bubble);  // ch06：退款表单（原因固定类目下拉，不追问）
+        addRefundForm(bubble, order || lastOrder);  // ch06：优先用帧内订单摘要，兜底最近点选
       }
     });
     bar.appendChild(btn);
@@ -304,9 +304,11 @@ function addOptionsButtons(bubble, options, contextText) {
   bubble.appendChild(bar);
 }
 
+let lastSelectorWrap = null;  // 评审 m4：resume 失败时解禁用
 function addOrderCards(bubble, orders) {
   const wrap = document.createElement('div');
   wrap.className = 'order-cards';
+  lastSelectorWrap = wrap;
   for (const o of orders) {
     const card = document.createElement('button');
     card.className = 'order-card';
@@ -326,7 +328,14 @@ function addOrderCards(bubble, orders) {
   scrollBottom();
 }
 
-function addRefundForm(bubble) {
+function addRefundForm(bubble, order) {
+  if (!order) {
+    const warn = document.createElement('div');
+    warn.className = 'refund-form';
+    warn.innerHTML = '<div class="rf-err">没有可退订单信息，请重新问一次「我要退款」并点选订单</div>';
+    bubble.appendChild(warn);
+    return;
+  }
   const form = document.createElement('div');
   form.className = 'refund-form';
   form.innerHTML = `
@@ -335,8 +344,8 @@ function addRefundForm(bubble) {
     <div class="rf-row"><label>金额</label><span class="rf-amount"></span></div>
     <div class="rf-row"><label>原因</label><select class="rf-reason"></select></div>
     <button class="rf-submit">提交退款单</button>`;
-  form.querySelector('.rf-order').textContent = lastOrder ? `#${lastOrder.order_no}` : '-';
-  form.querySelector('.rf-amount').textContent = lastOrder ? `¥${lastOrder.amount}` : '-';
+  form.querySelector('.rf-order').textContent = `#${order.order_no}`;
+  form.querySelector('.rf-amount').textContent = `¥${order.amount}`;
   const sel = form.querySelector('.rf-reason');
   for (const r of REFUND_REASONS) {
     const op = document.createElement('option');
@@ -345,7 +354,7 @@ function addRefundForm(bubble) {
   }
   form.querySelector('.rf-submit').addEventListener('click', async () => {
     const btn = form.querySelector('.rf-submit');
-    if (!lastOrder || btn.disabled) return;
+    if (btn.disabled) return;
     btn.disabled = true; btn.textContent = '提交中…';
     try {
       const resp = await fetch('/api/refunds', {
@@ -353,9 +362,9 @@ function addRefundForm(bubble) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           conversation_id: conversationId,
-          order_no: lastOrder.order_no,
+          order_no: order.order_no,
           reason_category: sel.value,
-          amount: lastOrder.amount,
+          amount: order.amount,
         }),
       });
       if (!resp.ok) throw new Error('提交失败');
@@ -450,7 +459,7 @@ async function streamChat(requestBody, botBubble, contextText) {
           textEl.innerHTML = '您想退哪一单？点下面的订单卡片继续：';
           addOrderCards(botBubble, payload.orders || []);
         } else if (event === 'options') {
-          addOptionsButtons(botBubble, payload.options || [], contextText);
+          addOptionsButtons(botBubble, payload.options || [], contextText, payload.order || null);
         } else if (event === 'delta') {
           if (firstToken) { textEl.textContent = ''; firstToken = false; }
           raw += payload.text;
@@ -477,7 +486,7 @@ async function streamChat(requestBody, botBubble, contextText) {
           stats.citations = citations.length; paintDiag();
           const finalize = () => {
             if (citations.length) renderAnswer(textEl, raw, citations);
-            addFeedback(botBubble, raw);
+            if (raw.trim()) addFeedback(botBubble, raw);  // 评审 m4：选择器轮空正文不挂反馈条
             console.log('🔍 本次收到 tool 事件:', toolCount, '条');
           };
           if (revealPos < raw.length) afterReveal = finalize;  // 打字机追完后补引用+反馈
@@ -490,6 +499,10 @@ async function streamChat(requestBody, botBubble, contextText) {
     if (textEl.querySelector('.typing')) textEl.textContent = '';
     botBubble.classList.add('error');
     textEl.textContent = `⚠️ ${err.message || '网络异常，请稍后重试'}`;
+    if (requestBody.resume && lastSelectorWrap) {
+      // 评审 m4：恢复失败 → 选择器卡片解禁可重试（后端登记已由 finally 回填）
+      lastSelectorWrap.querySelectorAll('.order-card').forEach(c => { c.disabled = false; c.classList.remove('picked'); });
+    }
   } finally {
     setBusy(false);
     input.focus();

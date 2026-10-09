@@ -22,6 +22,7 @@ async def db_session(session_factory):
         await session.execute(text("SET FOREIGN_KEY_CHECKS=0"))
         for t in (
             "messages",
+            "refund_orders",
             "tickets",
             "conversations",
             "faq",

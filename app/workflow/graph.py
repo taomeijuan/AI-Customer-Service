@@ -45,6 +45,7 @@ class WorkflowState(TypedDict, total=False):
     turn: int
     raw_query: str  # 用户原话（resolve 改写前的真源，落库用）
     order_no: str  # ch06 退款子流程选定的订单号
+    order_brief: dict  # ch06 退款子流程订单摘要（options 帧随发到前端）
 
 
 def _make_router(has_refund_prep: bool):

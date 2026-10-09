@@ -34,7 +34,7 @@ from app.knowledge.milvus_store import LazyMilvusStore
 from app.knowledge.retriever import HybridRetriever
 from app.workflow.agent_node import build_agent_node
 from app.workflow.expander import ExpansionSchema, Expander
-from app.workflow.graph import FALLBACK_TEXT, build_workflow
+from app.workflow.graph import build_workflow
 from app.workflow.intent import LangChainIntentClassifier
 from app.workflow.refund_flow import build_refund_prep
 from app.workflow.resolver import ResolutionSchema, Resolver
@@ -83,9 +83,9 @@ def create_app() -> FastAPI:
     refund_prep = build_refund_prep(
         retriever=retriever,
         expander=Expander(build_structured_model(model, ExpansionSchema)),  # ch06 Query 扩写
-        session_factory=app.state.session_factory,
     )
     app.state.pending_resumes = {}  # ch06 槽位：conversation_id → 中断 thread_id
+    app.state.turn_counters = {}  # 评审 M2：轮次单调计数器（与检查点同生命周期）
     app.state.workflow = build_workflow(
         retriever=retriever,
         agent_node=agent_node,
