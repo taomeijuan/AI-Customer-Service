@@ -43,6 +43,8 @@ from app.tools.ticket import build_create_ticket_tool
 
 STATIC_DIR = Path(__file__).parent / "static"
 
+logger = logging.getLogger(__name__)
+
 
 def create_app() -> FastAPI:
     @asynccontextmanager
@@ -54,6 +56,24 @@ def create_app() -> FastAPI:
     settings = get_settings()
     app.state.settings = settings
     app.state.engine, app.state.session_factory = build_engine(settings)
+
+    # ch07 启动自检：只依赖配置，create_app 期算（ASGITransport 测试不走 lifespan 也在）
+    from app.memory.budget import compute_budget
+
+    budget = compute_budget(settings)
+    app.state.context_budget = budget
+    if not budget.ok:
+        logger.error(
+            "上下文预算不足：窗口匀出 %d、期望 %d、历史预算仅 %d < 单轮稳态 %d，"
+            "请调小固定预留/步数/工具峰值或换大窗口模型",
+            budget.window_avail, budget.desired, budget.history, settings.turn_steady_tokens,
+        )
+    else:
+        logger.info(
+            "context budget: history=%d layer1=%d layer2=%d (peak=%d fixed=%d)",
+            budget.history, budget.layer1, budget.layer2, budget.peak, budget.fixed,
+        )
+
     embedder = build_embedder(settings)
     milvus_store = LazyMilvusStore(
         uri=settings.milvus_uri, collection=settings.milvus_collection
@@ -98,7 +118,8 @@ def create_app() -> FastAPI:
 
     @app.get("/healthz")
     async def healthz() -> dict:
-        return {"status": "ok"}
+        budget = getattr(app.state, "context_budget", None)
+        return {"status": "ok", "budget_ok": bool(budget and budget.ok)}
 
     @app.get("/rag-eval", include_in_schema=False)
     async def rag_eval_page() -> FileResponse:

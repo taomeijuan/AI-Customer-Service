@@ -85,7 +85,7 @@ def make(milvus, rewriter=None, reranker=None):
                 "retrieval_top_k": 5,
                 "hybrid_candidates": 50,
                 "rrf_k": 60,
-                "rerank_top_n": 3,
+                "rerank_top_k": 3,
                 "retrieval_low_conf_threshold": 0.25,
             },
         )(),

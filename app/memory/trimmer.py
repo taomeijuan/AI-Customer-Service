@@ -1,12 +1,12 @@
-import tiktoken
 from langchain.messages import HumanMessage
 from langchain_core.messages import BaseMessage
 
-_encoding = tiktoken.get_encoding("cl100k_base")  # 四家上游统一近似
+from app.memory.tokens import count_message_tokens
 
 
 def count_tokens(message: BaseMessage) -> int:
-    return len(_encoding.encode(str(message.content)))
+    """ch07：切统一字数折算口径（原 tiktoken 见 tokens.py 校准记录）。"""
+    return count_message_tokens(message)
 
 
 def trim_history(messages: list[BaseMessage], budget_tokens: int) -> list[BaseMessage]:

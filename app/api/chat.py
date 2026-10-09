@@ -102,7 +102,7 @@ async def chat_stream(
             inputs = Command(resume=req.resume)
             config = {
                 "configurable": {"thread_id": claimed},
-                "recursion_limit": settings.agent_max_steps + 4,
+                "recursion_limit": settings.max_agent_steps + 4,
             }
     else:
         # 评审 M2：新消息=放弃挂起的点选流程（清登记，防旧线程劫持新语义）
@@ -124,7 +124,7 @@ async def chat_stream(
         }
         config = {
             "configurable": {"thread_id": f"{conversation_id}:{turn}"},
-            "recursion_limit": settings.agent_max_steps + 4,  # 父图多节点余量
+            "recursion_limit": settings.max_agent_steps + 4,  # 父图多节点余量
         }
 
     deltas = 0

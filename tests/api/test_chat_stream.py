@@ -106,7 +106,7 @@ def _make_app(session_factory, db_session, classifier_intent="物流", retriever
         agent_node = build_agent_node(
             llm=agent_llm,
             tools=agent_tools,
-            settings=SimpleNamespace(agent_max_steps=8),
+            settings=SimpleNamespace(max_agent_steps=8),
             checkpointer=InMemorySaver(),
         )
     app.state.workflow = _make_workflow(
@@ -248,7 +248,7 @@ async def test_subgraph_tokens_streamed_as_deltas(session_factory, db_session):
     agent = build_agent_node(
         llm=ScriptedModel(steps=["Agent 已查明"]),
         tools=[_order_stub()],
-        settings=SimpleNamespace(agent_max_steps=6),
+        settings=SimpleNamespace(max_agent_steps=6),
         checkpointer=InMemorySaver(),
     )
     app.state.workflow = _make_workflow(
@@ -307,7 +307,7 @@ async def test_tool_frames_realtime_before_deltas(session_factory, db_session):
     agent = build_agent_node(
         llm=ScriptedModel(),
         tools=[_order_stub()],
-        settings=SimpleNamespace(agent_max_steps=6),
+        settings=SimpleNamespace(max_agent_steps=6),
         checkpointer=InMemorySaver(),
     )
     app.state.workflow = _make_workflow(

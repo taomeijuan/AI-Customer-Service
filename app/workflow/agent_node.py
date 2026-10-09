@@ -176,7 +176,7 @@ def build_agent_node(
                 {"messages": injected + [HumanMessage(state["query"])]},
                 config={
                     "configurable": {"thread_id": thread_id},
-                    "recursion_limit": settings.agent_max_steps,
+                    "recursion_limit": settings.max_agent_steps,
                     "callbacks": [_ToolFrameHandler(writer)],
                 },
             )

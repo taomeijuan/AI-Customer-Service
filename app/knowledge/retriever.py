@@ -59,10 +59,10 @@ class HybridRetriever:
             raw = self._milvus.search_text(search_text, top_k=self._settings.retrieval_top_k, filter=flt)
         else:  # hybrid / hybrid_rerank
             vector = await self._embedder.embed_one(search_text)
-            # 融合池要喂得饱精排：hybrid_rerank 至少取 rerank_top_n 条候选
+            # 融合池要喂得饱精排：hybrid_rerank 至少取 rerank_top_k 条候选
             fusion_top_k = max(
                 self._settings.retrieval_top_k,
-                self._settings.rerank_top_n if strategy == "hybrid_rerank" and self._reranker else 0,
+                self._settings.rerank_top_k if strategy == "hybrid_rerank" and self._reranker else 0,
             )
             raw = self._milvus.hybrid_search(
                 query_vector=vector,
@@ -88,7 +88,7 @@ class HybridRetriever:
         if strategy == "hybrid_rerank" and self._reranker is not None and evidences:
             # Reranker.rerank 是 async（httpx.AsyncClient），直接 await
             evidences, reranked = await self._reranker.rerank(
-                query, evidences, self._settings.rerank_top_n
+                query, evidences, self._settings.rerank_top_k
             )
 
         # 置信度语义按策略区分：仅「精排成功后的 relevance_score」与「dense COSINE」

@@ -50,7 +50,7 @@ class ScriptedChatModel(BaseChatModel):
 def _settings(max_steps=8):
     from types import SimpleNamespace
 
-    return SimpleNamespace(agent_max_steps=max_steps)
+    return SimpleNamespace(max_agent_steps=max_steps)
 
 
 def _make_llm(script):
