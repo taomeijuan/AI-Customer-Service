@@ -47,10 +47,13 @@ def build_refund_prep(
 
         query = state["query"]
 
-        # ① 订单号：正则提取 + 白名单校验；不过审不猜 → interrupt 弹选择器
+        # ① 订单号：只认用户**原话**里的数字（评审 m8 改判：消解从历史推断出的
+        # 单号是模型猜的，不算用户给了单号——原话没号就弹选择器让用户自己选）。
+        # 白名单双保险：正则候选须在已知订单集内，「1999 元那单」不喂假数据。
         known = _known_order_nos()
         order_no = ""
-        m = ORDER_NO_RE.search(query)
+        raw_text = state.get("raw_query") or query
+        m = ORDER_NO_RE.search(raw_text)
         if m and m.group(1) in known:
             order_no = m.group(1)
         if not order_no:

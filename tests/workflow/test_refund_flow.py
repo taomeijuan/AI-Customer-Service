@@ -177,3 +177,15 @@ async def test_resume_order_brief_reaches_options_channel():
             break
     else:
         raise AssertionError("refund_prep 更新里没看到 order_brief/options")
+
+
+async def test_resolved_query_number_does_not_bypass_selector():
+    """评审 m8 改判回归：单号出现在消解改写句（从历史推断）而不在用户原话里
+    → 必须仍弹选择器。直通的唯一合法来源是原话自带单号。"""
+    wf, agent, _ = _make()
+    out = await wf.ainvoke(
+        {"query": "订单1001怎么申请退款", "raw_query": "我要退款", "messages": []},
+        config=CFG,
+    )
+    assert "__interrupt__" in out, "消解推断出的单号不应视为用户给了单号"
+    assert agent.calls == []
