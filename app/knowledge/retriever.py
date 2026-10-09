@@ -99,3 +99,32 @@ class HybridRetriever:
         else:
             low_confidence = not evidences
         return RetrievalResult(evidences=evidences, low_confidence=low_confidence)
+
+    async def retrieve_multi(
+        self,
+        queries: list[str],
+        strategy: str = "hybrid_rerank",
+        category_prefix: str | None = None,
+    ) -> RetrievalResult:
+        """ch06 扩写多路检索：每条查询独立 retrieve，按 chunk_id 去重取最高分。
+
+        低置信语义放宽：任意一路拿到置信证据即放行（扩写本意是扩召回），
+        全部路段都弱才算弱。空查询列表 → 空结果 + 弱置信（调用方走兜底）。
+        """
+        cleaned = [q.strip() for q in queries if q and q.strip()]
+        if not cleaned:
+            return RetrievalResult(evidences=[], low_confidence=True)
+
+        best: dict[int, Evidence] = {}
+        all_low = True
+        for q in cleaned:
+            result = await self.retrieve(q, strategy=strategy, category_prefix=category_prefix)
+            if not result.low_confidence:
+                all_low = False
+            for ev in result.evidences:
+                cur = best.get(ev.chunk_id)
+                if cur is None or ev.score > cur.score:
+                    best[ev.chunk_id] = ev
+
+        evidences = sorted(best.values(), key=lambda e: e.score, reverse=True)
+        return RetrievalResult(evidences=evidences, low_confidence=all_low)
