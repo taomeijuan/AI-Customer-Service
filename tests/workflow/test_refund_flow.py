@@ -180,12 +180,26 @@ async def test_resume_order_brief_reaches_options_channel():
 
 
 async def test_resolved_query_number_does_not_bypass_selector():
-    """评审 m8 改判回归：单号出现在消解改写句（从历史推断）而不在用户原话里
+    """评审 m8 改判回归：单号是消解器从历史**推断**进改写句的、用户原话没提
     → 必须仍弹选择器。直通的唯一合法来源是原话自带单号。"""
-    wf, agent, _ = _make()
-    out = await wf.ainvoke(
-        {"query": "订单1001怎么申请退款", "raw_query": "我要退款", "messages": []},
-        config=CFG,
+
+    class _InjectingResolver:
+        async def resolve(self, query, history):
+            return "订单1001怎么申请退款"  # 模拟消解从历史补出的号（原话没有）
+
+    agent = _FakeAgent()
+    wf2 = build_workflow(
+        retriever=_StubRetriever(),
+        agent_node=agent,
+        intent_classifier=_StubClassifier("退款退货"),
+        session_factory=None,
+        resolver=_InjectingResolver(),
+        refund_prep=build_refund_prep(retriever=_StubRetriever(), expander=_StubExpander()),
+        checkpointer=InMemorySaver(),
+    )
+    out = await wf2.ainvoke(
+        {"query": "我要退款", "messages": []},
+        config={"configurable": {"thread_id": "t-resolved2"}, "recursion_limit": 12},
     )
     assert "__interrupt__" in out, "消解推断出的单号不应视为用户给了单号"
     assert agent.calls == []
