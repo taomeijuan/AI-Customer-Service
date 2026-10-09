@@ -89,32 +89,48 @@ class MessagesRepo:
             # tool 结果与工具申请行不打断配对
         return grouped
 
+    async def load_history_with_ids(self, conversation_id: int) -> list[tuple[int, BaseMessage]]:
+        """ch07 分层用：(消息 id, BaseMessage) 按序——层边界靠 id 表达，不搬数据。"""
+        rows = await self._fetch_rows(conversation_id)
+        name_by_call_id = self._tool_names(rows)
+        out: list[tuple[int, BaseMessage]] = []
+        for row in rows:
+            out.append((row.id, self._row_to_message(row, name_by_call_id)))
+        return out
+
     async def load_history(self, conversation_id: int) -> list[BaseMessage]:
         """按序重建 BaseMessage 列表；assistant 行的 tool_calls JSON 还原为申请单。"""
+        rows = await self._fetch_rows(conversation_id)
+        name_by_call_id = self._tool_names(rows)
+        return [self._row_to_message(row, name_by_call_id) for row in rows]
+
+    async def _fetch_rows(self, conversation_id: int):
         result = await self._session.execute(
             select(Message)
             .where(Message.conversation_id == conversation_id)
             .order_by(Message.id)
         )
-        rows = result.scalars().all()
-        name_by_call_id: dict[str, str] = {}
+        return result.scalars().all()
+
+    @staticmethod
+    def _tool_names(rows) -> dict[str, str]:
+        mapping: dict[str, str] = {}
         for r in rows:
             if r.role == "assistant" and r.tool_calls:
                 for tc in r.tool_calls:
                     if tc.get("id"):
-                        name_by_call_id[tc["id"]] = tc.get("name")
-        out: list[BaseMessage] = []
-        for row in rows:
-            if row.role == "user":
-                out.append(HumanMessage(row.content or ""))
-            elif row.role == "assistant":
-                out.append(AIMessage(content=row.content or "", tool_calls=row.tool_calls or []))
-            else:  # tool：工具名从配对 assistant 的 tool_calls 里按 tool_call_id 反查
-                out.append(
-                    ToolMessage(
-                        content=row.content or "",
-                        tool_call_id=row.tool_call_id,
-                        name=name_by_call_id.get(row.tool_call_id or ""),
-                    )
-                )
-        return out
+                        mapping[tc["id"]] = tc.get("name")
+        return mapping
+
+    @staticmethod
+    def _row_to_message(row, name_by_call_id: dict[str, str]) -> BaseMessage:
+        if row.role == "user":
+            return HumanMessage(row.content or "")
+        if row.role == "assistant":
+            return AIMessage(content=row.content or "", tool_calls=row.tool_calls or [])
+        # tool：工具名从配对 assistant 的 tool_calls 里按 tool_call_id 反查
+        return ToolMessage(
+            content=row.content or "",
+            tool_call_id=row.tool_call_id,
+            name=name_by_call_id.get(row.tool_call_id or ""),
+        )

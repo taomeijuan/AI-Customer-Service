@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, Enum, ForeignKey, JSON, Numeric, String, Text, func
+from sqlalchemy import BigInteger, Boolean, Enum, ForeignKey, JSON, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -17,8 +17,28 @@ class Conversation(Base):
         default="进行中",
         server_default="进行中",
     )
+    # ch07 三层上下文：梗概投影 + 两个边界锚（NULL=未设；边界用消息 id 表达，不搬数据）
+    summary: Mapped[str | None] = mapped_column(Text, default=None)
+    summary_upto_msg_id: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    layer1_from_msg_id: Mapped[int | None] = mapped_column(BigInteger, default=None)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+
+
+class ConversationSummary(Base):
+    """ch07 分段摘要：一段一行只追加，压完不回炉重压。"""
+
+    __tablename__ = "conversation_summaries"
+    __table_args__ = (UniqueConstraint("conversation_id", "seq", name="uk_conv_seq"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    conversation_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("conversations.id")
+    )
+    seq: Mapped[int] = mapped_column()  # 第几段，从 1 开始
+    from_msg_id: Mapped[int] = mapped_column(BigInteger)
+    upto_msg_id: Mapped[int] = mapped_column(BigInteger)
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
 class Message(Base):

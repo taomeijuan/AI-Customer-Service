@@ -23,6 +23,7 @@ async def db_session(session_factory):
         for t in (
             "messages",
             "refund_orders",
+            "conversation_summaries",
             "tickets",
             "conversations",
             "faq",
