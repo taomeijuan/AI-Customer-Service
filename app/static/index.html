@@ -137,14 +137,14 @@
   <textarea id="input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
   <button id="send">发送</button>
 </footer>
-<div class="hint" id="diag">ch05 · Workflow 编排 · 前端 v2026-10-08c · 等待消息…</div>
+<div class="hint" id="diag">ch05 · Workflow 编排 · 前端 v2026-10-09c · 等待消息…</div>
 
 <script>
-console.log('🖥️ 前端版本 v2026-10-08c');
+console.log('🖥️ 前端版本 v2026-10-09c');
 const diag = document.getElementById('diag');
 const stats = { meta: 0, tool: [], delta: 0, citations: -1, errors: '' };
 function paintDiag() {
-  diag.textContent = `前端 v2026-10-08c · meta ${stats.meta} · tool ${stats.tool.length}${stats.tool.length ? '(' + stats.tool.join(',') + ')' : ''} · delta ${stats.delta} · citations ${stats.citations === -1 ? '—' : stats.citations}${stats.errors ? ' · ⚠️ ' + stats.errors : ''}`;
+  diag.textContent = `前端 v2026-10-09c · meta ${stats.meta} · tool ${stats.tool.length}${stats.tool.length ? '(' + stats.tool.join(',') + ')' : ''} · delta ${stats.delta} · citations ${stats.citations === -1 ? '—' : stats.citations}${stats.errors ? ' · ⚠️ ' + stats.errors : ''}`;
 }
 window.onerror = function(msg, src, line) { stats.errors = msg + ' @' + line; paintDiag(); console.error('💥 JS Error:', msg, 'line', line); };
 const chat = document.getElementById('chat');
@@ -313,6 +313,10 @@ async function send() {
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '', firstToken = true, raw = '', toolCount = 0;
+    let revealTimer = null, revealPos = 0, afterReveal = null;  // 打字机：固定节奏逐字揭示               闭包内独立于后端块粒度
+    function stopReveal() {
+      if (revealTimer) { clearInterval(revealTimer); revealTimer = null; }
+    }
 
     while (true) {
       const { done, value } = await reader.read();
@@ -356,22 +360,38 @@ async function send() {
           if (firstToken) { textEl.textContent = ''; firstToken = false; }
           raw += payload.text;
           stats.delta++; paintDiag();
-          renderMd(textEl, raw);
+          if (!revealTimer) {  // 恒速打字机：每 28ms 多露 1 字，追平即停
+            revealTimer = setInterval(() => {
+              revealPos = Math.min(revealPos + 1, raw.length);
+              renderMd(textEl, raw.slice(0, revealPos));
+              scrollBottom();
+              if (revealPos >= raw.length) {
+                stopReveal();
+                if (afterReveal) { const f = afterReveal; afterReveal = null; f(); }
+              }
+            }, 28);
+          }
           scrollBottom();
         } else if (event === 'error') {
+          stopReveal();
           textEl.textContent = '';
           botBubble.classList.add('error');
           renderMd(textEl, payload.message || '服务暂时不可用');
         } else if (event === 'done') {
           const citations = payload.citations || [];
           stats.citations = citations.length; paintDiag();
-          if (citations.length) renderAnswer(textEl, raw, citations);
-          addFeedback(botBubble, raw);
-          console.log('🔍 本次收到 tool 事件:', toolCount, '条');
+          const finalize = () => {
+            if (citations.length) renderAnswer(textEl, raw, citations);
+            addFeedback(botBubble, raw);
+            console.log('🔍 本次收到 tool 事件:', toolCount, '条');
+          };
+          if (revealPos < raw.length) afterReveal = finalize;  // 打字机追完后补引用+反馈
+          else finalize();
         }
       }
     }
   } catch (err) {
+    stopReveal();
     if (textEl.querySelector('.typing')) textEl.textContent = '';
     botBubble.classList.add('error');
     textEl.textContent = `⚠️ ${err.message || '网络异常，请稍后重试'}`;
