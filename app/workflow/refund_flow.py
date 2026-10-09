@@ -92,6 +92,7 @@ def build_refund_prep(
             "order_no": order_no,
             "evidence": citations,
             "refusal": False,
+            "options": ["申请退款"],  # 前端据 OrderNo 渲染退款表单入口
             "messages": [
                 SystemMessage(
                     f"已检索到以下政策条款，回答时必须用 [n] 角标引用：\n{knowledge}\n\n"

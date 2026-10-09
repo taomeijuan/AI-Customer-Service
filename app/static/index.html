@@ -99,6 +99,28 @@
   .feedback button:hover { border-color: var(--brand); }
   .feedback button.on { background: var(--brand-soft); border-color: var(--brand); }
   .feedback .done-tip { font-size: 11.5px; color: var(--dim); }
+  .order-cards { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .order-card {
+    text-align: left; border: 1px solid #ffd0bf; background: #fff;
+    border-radius: 10px; padding: 8px 12px; cursor: pointer; font-size: 13px;
+  }
+  .order-card:hover:not(:disabled) { border-color: var(--brand); background: var(--brand-soft); }
+  .order-card:disabled { cursor: default; opacity: .75; }
+  .order-card.picked { border-color: var(--brand); background: var(--brand-soft); }
+  .oc-top { font-weight: 700; color: #d84315; font-size: 12.5px; }
+  .oc-sub { color: #5d4037; font-size: 12px; margin-top: 2px; }
+  .refund-form {
+    margin-top: 8px; border: 1px solid #ffe0d4; background: var(--brand-soft);
+    border-radius: 10px; padding: 10px 12px; font-size: 13px;
+  }
+  .rf-title { font-weight: 700; color: #d84315; margin-bottom: 6px; }
+  .rf-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+  .rf-row label { color: #9aa0a8; width: 34px; flex-shrink: 0; font-size: 12px; }
+  .rf-reason { flex: 1; border: 1px solid #e3e5e8; border-radius: 6px; padding: 4px 6px; font-size: 13px; font-family: inherit; }
+  .rf-submit { border: none; background: var(--brand); color: #fff; border-radius: 8px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+  .rf-submit:disabled { opacity: .5; cursor: not-allowed; }
+  .rf-err { color: #cf1322; font-size: 12px; }
+  .rf-sub { color: #5d4037; font-size: 12.5px; }
   footer {
     padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
     background: #fff; border-top: 1px solid #ececec;
@@ -137,14 +159,14 @@
   <textarea id="input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
   <button id="send">发送</button>
 </footer>
-<div class="hint" id="diag">ch05 · Workflow 编排 · 前端 v2026-10-09c · 等待消息…</div>
+<div class="hint" id="diag">ch06 · 分流器正式版 · 前端 v2026-10-10a · 等待消息…</div>
 
 <script>
-console.log('🖥️ 前端版本 v2026-10-09c');
+console.log('🖥️ 前端版本 v2026-10-10a');
 const diag = document.getElementById('diag');
 const stats = { meta: 0, tool: [], delta: 0, citations: -1, errors: '' };
 function paintDiag() {
-  diag.textContent = `前端 v2026-10-09c · meta ${stats.meta} · tool ${stats.tool.length}${stats.tool.length ? '(' + stats.tool.join(',') + ')' : ''} · delta ${stats.delta} · citations ${stats.citations === -1 ? '—' : stats.citations}${stats.errors ? ' · ⚠️ ' + stats.errors : ''}`;
+  diag.textContent = `前端 v2026-10-10a · meta ${stats.meta} · tool ${stats.tool.length}${stats.tool.length ? '(' + stats.tool.join(',') + ')' : ''} · delta ${stats.delta} · citations ${stats.citations === -1 ? '—' : stats.citations}${stats.errors ? ' · ⚠️ ' + stats.errors : ''}`;
 }
 window.onerror = function(msg, src, line) { stats.errors = msg + ' @' + line; paintDiag(); console.error('💥 JS Error:', msg, 'line', line); };
 const chat = document.getElementById('chat');
@@ -158,6 +180,8 @@ let userId = localStorage.getItem(uidKey);
 if (!userId) { userId = crypto.randomUUID(); localStorage.setItem(uidKey, userId); }
 let conversationId = JSON.parse(localStorage.getItem(convKey) || 'null');
 let streaming = false;
+let lastOrder = null;  // ch06：订单选择器最近点选的订单（退款表单用）
+const REFUND_REASONS = ['七天无理由', '质量问题', '少件', '与描述不符', '其他'];  // 与后端 /api/refunds 同源
 
 function scrollBottom() { chat.scrollTop = chat.scrollHeight; }
 
@@ -244,7 +268,7 @@ function addFeedback(bubble, answerText) {
   bubble.appendChild(bar);
 }
 
-function addOptionsButtons(bubble, options, complaintText) {
+function addOptionsButtons(bubble, options, contextText) {
   const bar = document.createElement('div');
   bar.className = 'options-bar';
   for (const opt of options) {
@@ -262,7 +286,7 @@ function addOptionsButtons(bubble, options, complaintText) {
         fetch('/api/tickets', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ conversation_id: conversationId, description: complaintText, ticket_type: '投诉' }),
+          body: JSON.stringify({ conversation_id: conversationId, description: contextText, ticket_type: '投诉' }),
         })
           .then(r => r.json())
           .then(body => {
@@ -271,11 +295,84 @@ function addOptionsButtons(bubble, options, complaintText) {
             scrollBottom();
           })
           .catch(() => { btn.disabled = false; });
+      } else if (opt === '申请退款') {
+        addRefundForm(bubble);  // ch06：退款表单（原因固定类目下拉，不追问）
       }
     });
     bar.appendChild(btn);
   }
   bubble.appendChild(bar);
+}
+
+function addOrderCards(bubble, orders) {
+  const wrap = document.createElement('div');
+  wrap.className = 'order-cards';
+  for (const o of orders) {
+    const card = document.createElement('button');
+    card.className = 'order-card';
+    card.innerHTML = `<div class="oc-top"></div><div class="oc-sub"></div>`;
+    card.querySelector('.oc-top').textContent = `📦 订单 ${o.order_no}`;
+    card.querySelector('.oc-sub').textContent = `${o.product} · ¥${o.amount} · ${o.status}`;
+    card.addEventListener('click', () => {
+      if (streaming) return;
+      wrap.querySelectorAll('.order-card').forEach(c => { c.disabled = true; });
+      card.classList.add('picked');
+      lastOrder = o;
+      resumeWithOrder(o);  // 点选 → 回填 resume → 子流程续跑
+    });
+    wrap.appendChild(card);
+  }
+  bubble.appendChild(wrap);
+  scrollBottom();
+}
+
+function addRefundForm(bubble) {
+  const form = document.createElement('div');
+  form.className = 'refund-form';
+  form.innerHTML = `
+    <div class="rf-title">📝 申请退款</div>
+    <div class="rf-row"><label>订单</label><span class="rf-order"></span></div>
+    <div class="rf-row"><label>金额</label><span class="rf-amount"></span></div>
+    <div class="rf-row"><label>原因</label><select class="rf-reason"></select></div>
+    <button class="rf-submit">提交退款单</button>`;
+  form.querySelector('.rf-order').textContent = lastOrder ? `#${lastOrder.order_no}` : '-';
+  form.querySelector('.rf-amount').textContent = lastOrder ? `¥${lastOrder.amount}` : '-';
+  const sel = form.querySelector('.rf-reason');
+  for (const r of REFUND_REASONS) {
+    const op = document.createElement('option');
+    op.value = r; op.textContent = r;
+    sel.appendChild(op);
+  }
+  form.querySelector('.rf-submit').addEventListener('click', async () => {
+    const btn = form.querySelector('.rf-submit');
+    if (!lastOrder || btn.disabled) return;
+    btn.disabled = true; btn.textContent = '提交中…';
+    try {
+      const resp = await fetch('/api/refunds', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversation_id: conversationId,
+          order_no: lastOrder.order_no,
+          reason_category: sel.value,
+          amount: lastOrder.amount,
+        }),
+      });
+      if (!resp.ok) throw new Error('提交失败');
+      const body = await resp.json();
+      form.innerHTML = `<div class="rf-title">✅ 退款单 ${body.refund_no} 已提交</div><div class="rf-sub">退款原因：${sel.value}，审核通过后原路退回</div>`;
+      scrollBottom();
+    } catch (e) {
+      btn.disabled = false; btn.textContent = '提交退款单';
+      if (!form.querySelector('.rf-err')) {
+        const tip = document.createElement('span');
+        tip.className = 'rf-err'; tip.textContent = ' 提交失败，请重试';
+        form.appendChild(tip);
+      }
+    }
+  });
+  bubble.appendChild(form);
+  scrollBottom();
 }
 
 function setBusy(b) {
@@ -285,23 +382,14 @@ function setBusy(b) {
   statusText.textContent = b ? '对方正在输入…' : '在线 · 为你服务';
 }
 
-async function send() {
-  const message = input.value.trim();
-  if (!message || streaming) return;
-  input.value = '';
-  input.style.height = 'auto';
-
-  addRow('user').querySelector('.text').textContent = message;
-  const botBubble = addRow('bot');
+async function streamChat(requestBody, botBubble, contextText) {
+  /** SSE 主循环（新消息与 resume 共用）。contextText 供 options 按钮的上下文。 */
   const textEl = botBubble.querySelector('.text');
-  textEl.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
-  setBusy(true);
-
   try {
     const resp = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conversation_id: conversationId, message, user_id: userId }),
+      body: JSON.stringify(requestBody),
     });
     if (resp.status === 404) {
       conversationId = null;
@@ -354,8 +442,15 @@ async function send() {
             if (!payload.ok) chip.classList.add('fail');
           }
           scrollBottom();
+        } else if (event === 'order_selector') {
+          // ch06：槽位缺失 → 订单选择器卡片，点选后 resume 续跑
+          stats.delta += 0;  // 无正文轮，自诊断行保持
+          paintDiag();
+          if (textEl.querySelector('.typing')) textEl.textContent = '';
+          textEl.innerHTML = '您想退哪一单？点下面的订单卡片继续：';
+          addOrderCards(botBubble, payload.orders || []);
         } else if (event === 'options') {
-          addOptionsButtons(botBubble, payload.options || [], message);
+          addOptionsButtons(botBubble, payload.options || [], contextText);
         } else if (event === 'delta') {
           if (firstToken) { textEl.textContent = ''; firstToken = false; }
           raw += payload.text;
@@ -398,6 +493,41 @@ async function send() {
   } finally {
     setBusy(false);
     input.focus();
+    scrollBottom();
+  }
+}
+
+async function send() {
+  const message = input.value.trim();
+  if (!message || streaming) return;
+  input.value = '';
+  input.style.height = 'auto';
+
+  addRow('user').querySelector('.text').textContent = message;
+  const botBubble = addRow('bot');
+  botBubble.querySelector('.text').innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
+  setBusy(true);
+  try {
+    await streamChat({ conversation_id: conversationId, message, user_id: userId }, botBubble, message);
+  } finally {
+    scrollBottom();
+  }
+}
+
+async function resumeWithOrder(order) {
+  /** ch06：订单卡片点选 → 用户侧回执 → resume 恢复子流程 */
+  const row = addRow('user');
+  row.querySelector('.text').textContent = `🧾 我要退订单 ${order.order_no}`;
+  const botBubble = addRow('bot');
+  botBubble.querySelector('.text').innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
+  setBusy(true);
+  try {
+    await streamChat(
+      { conversation_id: conversationId, user_id: userId, resume: { order_no: order.order_no } },
+      botBubble,
+      `我要退订单 ${order.order_no}`
+    );
+  } finally {
     scrollBottom();
   }
 }
