@@ -1,6 +1,6 @@
 from sqlalchemy import select
 
-from app.db.models import Conversation
+from app.db.models import Conversation, Message
 
 
 class ConversationsRepo:
@@ -28,3 +28,57 @@ class ConversationsRepo:
             select(Conversation).where(Conversation.id == conversation_id)
         )
         return result.scalars().one_or_none()
+
+
+# ---- ch07 会话侧栏只读查询（独立函数，不撑大 ConversationsRepo 类职责）----
+async def list_user_conversations(session, user_id: str) -> list[dict]:
+    """该用户全部会话：新在前，带首问预览与已摘要标记。"""
+    from sqlalchemy import text as sa_text
+
+    rows = (
+        await session.execute(
+            sa_text(
+                """
+                SELECT c.id, c.updated_at, c.summary_upto_msg_id,
+                       (SELECT m.content FROM messages m
+                         WHERE m.conversation_id = c.id AND m.role='user'
+                         ORDER BY m.id LIMIT 1) AS first_q
+                FROM conversations c
+                WHERE c.user_id = :u
+                ORDER BY c.updated_at DESC, c.id DESC
+                """
+            ),
+            {"u": user_id},
+        )
+    ).all()
+    return [
+        {
+            "id": r[0],
+            "title": (r[3] or "（新会话）")[:20],
+            "updated_at": r[1].isoformat(timespec="seconds"),
+            "has_summary": bool(r[2]),
+        }
+        for r in rows
+    ]
+
+
+async def get_visible_messages(session, conversation_id: int, user_id: str) -> list[dict] | None:
+    """回载历史原文（跳过 tool 行与工具申请行）；非本人会话返回 None。"""
+    conv = await session.get(Conversation, conversation_id)
+    if conv is None or conv.user_id != user_id:
+        return None
+    from sqlalchemy import select
+
+    rows = (
+        await session.execute(
+            select(Message)
+            .where(Message.conversation_id == conversation_id)
+            .order_by(Message.id)
+        )
+    ).scalars().all()
+    out: list[dict] = []
+    for r in rows:
+        if r.role == "tool" or (r.role == "assistant" and r.tool_calls and not r.content):
+            continue
+        out.append({"role": r.role, "content": r.content or ""})
+    return out

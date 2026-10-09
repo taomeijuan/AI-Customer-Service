@@ -22,6 +22,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.api.chat import router as chat_router
+from app.api.conversations import router as conversations_router
 from app.api.extract import router as extract_router
 from app.api.rag_eval import router as rag_eval_router
 from app.api.refunds import router as refunds_router
@@ -134,6 +135,7 @@ def create_app() -> FastAPI:
         return FileResponse(STATIC_DIR / "rag_eval.html")
 
     app.include_router(chat_router)
+    app.include_router(conversations_router)
     app.include_router(extract_router)
     app.include_router(rag_eval_router)
     app.include_router(refunds_router)
