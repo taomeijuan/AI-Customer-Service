@@ -1,0 +1,4 @@
+{"query": "这个能退吗", "context": "订单 1001：扫地机器人，状态已付款", "expect_count_min": 2, "expect_count_max": 4}
+{"query": "耳机右边没声音怎么退款", "context": "订单 1003：无线蓝牙耳机", "expect_count_min": 2, "expect_count_max": 4}
+{"query": "退款多久到账", "context": null, "expect_count_min": 2, "expect_count_max": 4}
+{"query": "七天无理由退货的条件是什么", "context": null, "expect_count_min": 2, "expect_count_max": 4}
