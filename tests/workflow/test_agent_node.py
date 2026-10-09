@@ -148,6 +148,23 @@ async def test_stale_citations_stripped_from_history_only(session_factory, db_se
 
 
 @pytest.mark.usefixtures("db_session")
+async def test_tool_evidence_rendered_as_readable_text(session_factory, db_session):
+    """工具结果的引用文本：中文可读（字段模板），而非原始 JSON 串。
+
+    回归背景：用户点 [n] 引用卡看到一坨 {"status":...} JSON，不可读。
+    """
+    llm = _make_llm([(("query_order", {"order_no": "1001"})), "final"])
+    node = _node(llm, _settings(6), session_factory)  # tools=[query_order, query_logistics]
+    out = await node(
+        {"query": "订单1001到哪里了", "messages": [], "conversation_id": 1, "turn": 1, "intent": "物流"}
+    )
+    ev = out["evidence"][0]
+    assert ev["section_path"] == "工具调用/query_order"
+    assert not ev["answer"].startswith("{")  # 不再是 JSON 原样
+    assert "订单 1001" in ev["answer"] and "状态" in ev["answer"]
+
+
+@pytest.mark.usefixtures("db_session")
 async def test_recursion_limit_guard(session_factory, db_session):
     """步数上限：模型永远要工具 → recursion_limit 兜住，返回兜底文本不炸会话。"""
     llm = _make_llm([(("query_order", {"order_no": "1001"}))] * 50)

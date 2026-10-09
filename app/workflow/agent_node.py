@@ -34,6 +34,49 @@ def _strip_stale_citations(text: str) -> str:
     return _CITE_RE.sub("", text)
 
 
+def _tool_answer_to_text(name: str, raw: str) -> str:
+    """工具结果（JSON 串）→ 引用卡片的可读中文文本。
+
+    未格式化的工具引用在卡片上是一坨 {'status': ...} JSON——用户不可读。
+    已知工具走字段模板，未知工具按 key：value 分行降级。
+    """
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return raw[:500].replace("{", "（").replace("}", "）") if raw[:1] == "{" else raw[:500]
+    if not isinstance(data, dict):
+        return str(data)[:500]
+
+    if name == "query_order":
+        return (
+            f"订单 {data.get('order_no', '')}：状态「{data.get('status', '')}」，"
+            f"商品 {data.get('product', '')}，金额 {data.get('amount', '')} 元，"
+            f"下单时间 {data.get('created_at', '')}"
+        )
+    if name == "query_logistics":
+        traces = data.get("traces") or []
+        lines = "；".join(
+            f"{t.get('time', '')} {t.get('desc', '')}"
+            for t in traces
+            if isinstance(t, dict)
+        )
+        return (
+            f"订单 {data.get('order_no', '')}：承运 {data.get('carrier', '')}，"
+            f"运单号 {data.get('tracking_no', '')}。轨迹：{lines}"
+        )
+    if name == "query_product":
+        return (
+            f"{data.get('product', '')}：价格 {data.get('price', '')} 元，"
+            f"库存 {data.get('stock', '')}，促销：{data.get('promo', '')}"
+        )
+    parts = []
+    for k, v in data.items():
+        if isinstance(v, (list, dict)):
+            v = json.dumps(v, ensure_ascii=False)
+        parts.append(f"{k}：{v}")
+    return "；".join(parts)[:500]
+
+
 class _ToolFrameHandler(AsyncCallbackHandler):
     """把 ReAct 子图内工具执行实时推成 running/done 帧（与回答 token 流交错）。
 
@@ -167,7 +210,7 @@ def build_agent_node(
                         "chunk_id": -n,  # 负数 = 工具结果（非知识 chunk）
                         "section_path": f"工具调用/{m.name or 'tool'}",
                         "question": state["query"],
-                        "answer": m.content[:500],
+                        "answer": _tool_answer_to_text(m.name or "tool", m.content),
                     })
 
             # 提取 AIMessage.tool_calls 的产出已由 _ToolFrameHandler 实时推帧，
