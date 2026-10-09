@@ -7,7 +7,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from langchain.messages import AIMessage
-from pydantic import BaseModel, Field
+from langgraph.types import Command
+from pydantic import BaseModel, Field, model_validator
 
 from app.memory.trimmer import trim_history_groups
 from app.repositories.conversations import ConversationsRepo
@@ -19,8 +20,18 @@ router = APIRouter()
 
 class ChatRequest(BaseModel):
     conversation_id: int | None = None
-    message: str = Field(min_length=1)
+    message: str | None = Field(default=None, min_length=1)
     user_id: str = Field(min_length=1, max_length=64)
+    resume: dict | None = None  # ch06：订单选择器点选回填 {"order_no": "1001"}
+
+    @model_validator(mode="after")
+    def _check_message_xor_resume(self):
+        """新消息与恢复流程二选一；恢复必须带会话 id。"""
+        if bool(self.message) == bool(self.resume):
+            raise ValueError("message 与 resume 必须二选一")
+        if self.resume is not None and self.conversation_id is None:
+            raise ValueError("resume 必须携带 conversation_id")
+        return self
 
 
 async def get_or_create_session(
@@ -34,6 +45,17 @@ async def get_or_create_session(
             )
         except KeyError:
             raise HTTPException(status_code=404, detail="会话不存在或已过期")
+
+
+async def check_resume_pending(
+    req: ChatRequest, request: Request, conversation_id: Annotated[int, Depends(get_or_create_session)]
+) -> None:
+    """ch06：resume 请求必须存在待恢复流程（生成器体内抛 HTTPException 已晚——
+    响应头 200 已发出改不了状态码，ch01 同款教训，校验必须放 Depends）。"""
+    if req.resume is not None:
+        pending = getattr(request.app.state, "pending_resumes", {})
+        if pending.get(conversation_id) is None:
+            raise HTTPException(status_code=409, detail="该会话没有待恢复的流程，请直接发消息")
 
 
 def _normalize_chunk(chunk):
@@ -56,27 +78,38 @@ async def chat_stream(
     req: ChatRequest,
     request: Request,
     conversation_id: Annotated[int, Depends(get_or_create_session)],
+    _resume_ok: Annotated[None, Depends(check_resume_pending)],
 ) -> AsyncIterable[ServerSentEvent]:
     """LangGraph 工作流驱动：subgraphs=True 冒出 ReAct 子图 token，custom 承接图内产出。"""
     workflow = request.app.state.workflow
     settings = request.app.state.settings
     session_factory = request.app.state.session_factory
 
-    # 历史从 MySQL 真源加载（分工制：checkpointer 只管轮内）
-    async with session_factory() as session:
-        history = await MessagesRepo(session).load_history(conversation_id)
-    trimmed = trim_history_groups(history, budget_tokens=settings.token_budget)
-    turn = len(history) + 1  # 单调递增，奇偶不碰撞
-    inputs = {
-        "query": req.message,
-        "messages": trimmed,
-        "conversation_id": conversation_id,
-        "turn": turn,
-    }
-    config = {
-        "configurable": {"thread_id": f"{conversation_id}:{turn}"},
-        "recursion_limit": settings.agent_max_steps + 4,  # 父图多节点余量
-    }
+    pending: dict = getattr(request.app.state, "pending_resumes", {})
+    if req.resume is not None:
+        # ch06 槽位恢复：从中断点续跑（检查点里存着原始 query/turn，历史不重载）
+        thread_id = pending.get(conversation_id)  # check_resume_pending 已保证存在
+        inputs = Command(resume=req.resume)
+        config = {
+            "configurable": {"thread_id": thread_id},
+            "recursion_limit": settings.agent_max_steps + 4,
+        }
+    else:
+        # 历史从 MySQL 真源加载（分工制：checkpointer 只管轮内）
+        async with session_factory() as session:
+            history = await MessagesRepo(session).load_history(conversation_id)
+        trimmed = trim_history_groups(history, budget_tokens=settings.token_budget)
+        turn = len(history) + 1  # 单调递增，奇偶不碰撞
+        inputs = {
+            "query": req.message,
+            "messages": trimmed,
+            "conversation_id": conversation_id,
+            "turn": turn,
+        }
+        config = {
+            "configurable": {"thread_id": f"{conversation_id}:{turn}"},
+            "recursion_limit": settings.agent_max_steps + 4,  # 父图多节点余量
+        }
 
     deltas = 0
     tool_frames = 0
@@ -135,7 +168,18 @@ async def chat_stream(
                             final_payload[k] = data[k]
             elif typ == "updates":
                 if ns == () and isinstance(data, dict):
+                    intr = data.get("__interrupt__")  # ch06 槽位中断（探针实证形态）
+                    for item in intr or ():
+                        value = getattr(item, "value", None)
+                        if isinstance(value, dict) and value.get("type") == "order_selector":
+                            pending[conversation_id] = config["configurable"]["thread_id"]
+                            yield emit(
+                                "order_selector",
+                                {"orders": value.get("orders", []), "question": value.get("question", "")},
+                            )
                     for node_name, update in data.items():
+                        if node_name == "__interrupt__":
+                            continue
                         if node_name == "agent":
                             # agent 节点完成：看门缓冲里是最终答案的尾巴，放流
                             while hold:
@@ -166,6 +210,9 @@ async def chat_stream(
     if final_payload.get("citations"):
         done_data["citations"] = final_payload["citations"]
     yield emit("done", done_data)
+
+    if req.resume is not None:
+        pending.pop(conversation_id, None)  # 恢复跑完，清除槽位登记
 
     logger.info(
         "stream done: cid=%s deltas=%d tool_frames=%d citations=%d",

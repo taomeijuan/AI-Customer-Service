@@ -44,18 +44,28 @@ class WorkflowState(TypedDict, total=False):
     final_text: str  # 最终回复文本（各路径产出）
     turn: int
     raw_query: str  # 用户原话（resolve 改写前的真源，落库用）
+    order_no: str  # ch06 退款子流程选定的订单号
 
 
-def _route_by_intent(state: WorkflowState) -> Literal["retrieve", "agent", "comfort", "chitchat"]:
-    """分流规则写死在代码里：八类意图 → 四出口（ch06：其他→Agent 兜底）。"""
-    intent = state["intent"]
-    if intent in ("商品咨询", "退款退货"):
-        return "retrieve"  # 知识类：强制先检索（退款子流程 ch06 T8 接入后改道）
-    if intent in ("物流", "订单", "售后", "其他"):
-        return "agent"  # 业务数据类直接进 Agent；其他=拿不准也交给 Agent 澄清
-    if intent == "投诉":
-        return "comfort"
-    return "chitchat"  # 闲聊
+def _make_router(has_refund_prep: bool):
+    """分流规则写死在代码里：八类意图 → 五出口（ch06：其他→Agent 兜底）。
+
+    退款子流程未注入时，退款退货/售后回退到检索路径（兼容旧接线/旧测试）。
+    """
+
+    def _route_by_intent(state: WorkflowState) -> Literal["retrieve", "refund_prep", "agent", "comfort", "chitchat"]:
+        intent = state["intent"]
+        if intent in ("商品咨询",):
+            return "retrieve"  # 知识类：强制先检索
+        if intent in ("退款退货", "售后"):
+            return "refund_prep" if has_refund_prep else "retrieve"  # ch06 退款子流程
+        if intent in ("物流", "订单", "其他"):
+            return "agent"  # 业务数据类直接进 Agent；其他=拿不准也交给 Agent 澄清
+        if intent == "投诉":
+            return "comfort"
+        return "chitchat"  # 闲聊
+
+    return _route_by_intent
 
 
 def _gate_after_retrieve(state: WorkflowState) -> Literal["fallback", "agent"]:
@@ -65,12 +75,23 @@ def _gate_after_retrieve(state: WorkflowState) -> Literal["fallback", "agent"]:
     return "agent"
 
 
+def _gate_after_refund(state: WorkflowState) -> Literal["fallback", "agent", "log"]:
+    """退款子流程出口：证据弱→fallback（记池+兜底话术）；用户取消点选→log；
+    正常拿到证据+订单→agent 判「这一单能不能退」。"""
+    if state.get("refusal"):
+        return "fallback"
+    if state.get("final_text"):  # 子流程已给出结束语（如未选订单取消）
+        return "log"
+    return "agent"
+
+
 def build_workflow(
     retriever: Any,
     agent_node: Any,  # async callable(state) -> {"final_text", "messages", "evidence"}
     intent_classifier: Any,  # async classify(query) -> IntentName
     session_factory: Any | None,
     resolver: Any | None = None,  # ch06：async resolve(query, history) -> str；None=透传
+    refund_prep: Any | None = None,  # ch06：退款确定性子流程节点；None=退款走检索路径
     checkpointer: Any | None = None,
 ):
     """组装工作流图。agent_node 由 build_agent_node 产出（create_react_agent 子图包装）。"""
@@ -184,10 +205,17 @@ def build_workflow(
     builder.add_node("comfort", comfort)
     builder.add_node("chitchat", chitchat)
     builder.add_node("log", log)
+    router = _make_router(refund_prep is not None)
+    router_paths = ["retrieve", "agent", "comfort", "chitchat"]
+    if refund_prep is not None:
+        router_paths.insert(1, "refund_prep")
+        builder.add_node("refund_prep", refund_prep)
+        # 退款闸：弱证据→fallback / 用户取消点选→log / 正常→agent
+        builder.add_conditional_edges("refund_prep", _gate_after_refund, ["fallback", "agent", "log"])
 
     builder.add_edge(START, "resolve")
     builder.add_edge("resolve", "intent")
-    builder.add_conditional_edges("intent", _route_by_intent, ["retrieve", "agent", "comfort", "chitchat"])
+    builder.add_conditional_edges("intent", router, router_paths)
     # 置信度闸 = 检索节点出边上的条件函数（非独立节点）
     builder.add_conditional_edges("retrieve", _gate_after_retrieve, ["fallback", "agent"])
     builder.add_edge("fallback", "log")

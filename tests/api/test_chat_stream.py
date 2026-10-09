@@ -335,3 +335,105 @@ async def test_empty_message_422(client):
         "/api/chat/stream", json={"user_id": "u1", "message": "", "conversation_id": None}
     )
     assert resp.status_code == 422
+
+
+async def test_order_selector_interrupt_and_resume(session_factory, db_session):
+    """ch06 验收4：无单号问退款 → SSE order_selector 帧；点选 resume → 子流程续跑完。"""
+    from langgraph.checkpoint.memory import InMemorySaver as _Saver
+    from langgraph.types import interrupt as _interrupt
+    from app.knowledge.reranker import Evidence as _Ev
+    from app.workflow.refund_flow import build_refund_prep as _build_refund
+
+    class _RefundRetriever:
+        async def retrieve(self, query, strategy="hybrid_rerank", category_prefix=None):
+            return RetrievalResult(evidences=[], low_confidence=False)
+
+        async def retrieve_multi(self, queries, strategy="hybrid_rerank", category_prefix=None):
+            return RetrievalResult(
+                evidences=[_Ev(21, "售后政策", "七天无理由", "签收7天内可退", 0.8)],
+                low_confidence=False,
+            )
+
+    class _StubExpander:
+        async def expand(self, query, context=None):
+            return ["七天无理由退货条件", "拆封商品能否退货"]
+
+    def _refund_prep(state):
+        from app.tools.ecommerce import orders_summary
+
+        if "1001" not in state["query"]:
+            choice = _interrupt({"type": "order_selector", "orders": orders_summary(), "question": state["query"]})
+            if not (choice or {}).get("order_no"):
+                return {"final_text": "已取消", "refusal": False, "evidence": []}
+        return {
+            "order_no": "1001",
+            "refusal": False,
+            "evidence": [{"n": 1, "chunk_id": 21, "section_path": "售后政策", "question": "七天无理由", "answer": "签收7天内可退"}],
+            "messages": [],
+        }
+
+    class _RouterClassifier(_FakeClassifier):
+        """退款退货为主，但闲聊问句判闲聊——否则 u2 的「你好」也会进退款子流程被 interrupt。"""
+
+        async def classify_detail(self, query):
+            from app.workflow.intent import ClassifyOutcome
+
+            intent = "闲聊" if "你好" in query else self.intent
+            return ClassifyOutcome(intent=intent, confidence=0.9)
+
+    app = create_app()
+    app.state.session_factory = session_factory
+    app.state.workflow = build_workflow(
+        retriever=_RefundRetriever(),
+        agent_node=_FakeAgent(text="订单 1001 可以退 [1]"),
+        intent_classifier=_RouterClassifier("退款退货"),
+        session_factory=session_factory,
+        resolver=None,
+        refund_prep=_refund_prep,  # 桩子流程：真 interrupt 语义 + 确定证据
+        checkpointer=_Saver(),
+    )
+    async with _client(app) as c:
+        # 第一段：无单号 → order_selector 帧 + done（本轮无正文）
+        r1 = await c.post(
+            "/api/chat/stream",
+            json={"user_id": "u1", "message": "这个能退吗", "conversation_id": None},
+        )
+        ev1 = sse_events(r1.text)
+        kinds1 = [e for e, _ in ev1]
+        assert "order_selector" in kinds1
+        selector = [v for e, v in ev1 if e == "order_selector"][0]
+        assert [o["order_no"] for o in selector["orders"]][:2] == ["1001", "1002"]
+        assert kinds1[-1] == "done"
+        cid = ev1[0][1]["conversation_id"]
+
+        # 校验：message 与 resume 二选一
+        bad = await c.post(
+            "/api/chat/stream",
+            json={"user_id": "u1", "message": " hi", "resume": {"order_no": "1001"}, "conversation_id": cid},
+        )
+        assert bad.status_code == 422
+
+        # 无 pending 的会话 resume → 409
+        fresh = await c.post(
+            "/api/chat/stream",
+            json={"user_id": "u2", "message": "你好", "conversation_id": None},
+        )
+        fresh_cid = sse_events(fresh.text)[0][1]["conversation_id"]
+        conflict = await c.post(
+            "/api/chat/stream",
+            json={"user_id": "u2", "resume": {"order_no": "1001"}, "conversation_id": fresh_cid},
+        )
+        assert conflict.status_code == 409
+
+        # 第二段：点选订单 1001 → 恢复续跑 → Agent 回答 + citations
+        r2 = await c.post(
+            "/api/chat/stream",
+            json={"user_id": "u1", "resume": {"order_no": "1001"}, "conversation_id": cid},
+        )
+        ev2 = sse_events(r2.text)
+        kinds2 = [e for e, _ in ev2]
+        done2 = [v for e, v in ev2 if e == "done"][0]
+        assert "order_selector" not in kinds2  # 恢复跑不再弹选择器
+        assert done2["citations"][0]["chunk_id"] == 21
+        deltas2 = [v["text"] for e, v in ev2 if e == "delta"]
+        assert "".join(deltas2) == "订单 1001 可以退 [1]"

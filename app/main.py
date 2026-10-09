@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.chat import router as chat_router
 from app.api.extract import router as extract_router
 from app.api.rag_eval import router as rag_eval_router
+from app.api.refunds import router as refunds_router
 from app.api.tickets import router as tickets_router
 from app.core.config import get_settings
 from app.core.llm import get_chat_model
@@ -32,8 +33,10 @@ from app.knowledge.reranker import build_reranker
 from app.knowledge.milvus_store import LazyMilvusStore
 from app.knowledge.retriever import HybridRetriever
 from app.workflow.agent_node import build_agent_node
-from app.workflow.graph import build_workflow
+from app.workflow.expander import ExpansionSchema, Expander
+from app.workflow.graph import FALLBACK_TEXT, build_workflow
 from app.workflow.intent import LangChainIntentClassifier
+from app.workflow.refund_flow import build_refund_prep
 from app.workflow.resolver import ResolutionSchema, Resolver
 from app.tools.ecommerce import query_logistics, query_order, query_product
 from app.tools.ticket import build_create_ticket_tool
@@ -77,12 +80,19 @@ def create_app() -> FastAPI:
         tools=[query_order, query_product, query_logistics],  # ch02 业务工具；知识类由图检索节点承担
         settings=settings,
     )
+    refund_prep = build_refund_prep(
+        retriever=retriever,
+        expander=Expander(build_structured_model(model, ExpansionSchema)),  # ch06 Query 扩写
+        session_factory=app.state.session_factory,
+    )
+    app.state.pending_resumes = {}  # ch06 槽位：conversation_id → 中断 thread_id
     app.state.workflow = build_workflow(
         retriever=retriever,
         agent_node=agent_node,
         intent_classifier=LangChainIntentClassifier(model),
         session_factory=app.state.session_factory,
         resolver=Resolver(build_structured_model(model, ResolutionSchema)),  # ch06 指代消解+改写
+        refund_prep=refund_prep,  # ch06 退款确定性子流程
         checkpointer=InMemorySaver(),
     )
 
@@ -97,6 +107,7 @@ def create_app() -> FastAPI:
     app.include_router(chat_router)
     app.include_router(extract_router)
     app.include_router(rag_eval_router)
+    app.include_router(refunds_router)
     app.include_router(tickets_router)
     app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 

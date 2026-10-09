@@ -39,9 +39,8 @@ def _anchor_dt(rng: random.Random) -> datetime:
     )
 
 
-@tool
-def query_order(order_no: str) -> dict:
-    """查询用户订单的状态、商品、金额等信息。当用户询问订单相关问题时调用。"""
+def order_data(order_no: str) -> dict:
+    """query_order 纯实现（退款子流程直调；工具对象包一层）。"""
     rng = _seeded_rng(str(order_no), "order")
     return {
         "order_no": order_no,
@@ -50,6 +49,29 @@ def query_order(order_no: str) -> dict:
         "amount": round(rng.uniform(29, 2999), 2),
         "created_at": _anchor_dt(rng).strftime("%Y-%m-%d %H:%M"),
     }
+
+
+def orders_summary() -> list[dict]:
+    """list_orders 纯实现：可操作订单 1001-1005 摘要，数据与 query_order 同源。"""
+    rows = []
+    for no in ("1001", "1002", "1003", "1004", "1005"):
+        o = order_data(no)
+        rows.append(
+            {"order_no": o["order_no"], "product": o["product"], "amount": o["amount"], "status": o["status"]}
+        )
+    return rows
+
+
+@tool
+def query_order(order_no: str) -> dict:
+    """查询用户订单的状态、商品、金额等信息。当用户询问订单相关问题时调用。"""
+    return order_data(order_no)
+
+
+@tool
+def list_orders() -> dict:
+    """列出当前用户可操作的订单摘要（订单号/商品/金额/状态）。用户想退款但没说订单号时，用于展示订单选择器。"""
+    return {"orders": orders_summary()}
 
 
 @tool

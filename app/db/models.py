@@ -60,6 +60,27 @@ class Ticket(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
+class RefundOrder(Base):
+    """退款单（ch06，DDL 用户授权自定：db/init/06-ch06.sql）。"""
+
+    __tablename__ = "refund_orders"
+    refund_no: Mapped[str] = mapped_column(String(32), primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("conversations.id")
+    )
+    order_no: Mapped[str] = mapped_column(String(32))
+    reason_category: Mapped[str] = mapped_column(
+        Enum("七天无理由", "质量问题", "少件", "与描述不符", "其他", name="refund_reason")
+    )
+    amount: Mapped[float] = mapped_column()  # decimal(10,2)，MySQL 侧精度
+    status: Mapped[str] = mapped_column(
+        Enum("待审核", "已同意", "已拒绝", "已退款", name="refund_status"),
+        default="待审核",
+        server_default="待审核",
+    )
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
 class KnowledgeChunk(Base):
     """知识库 chunk 原文权威源（ch03，用户 DDL 对齐）。"""
 
