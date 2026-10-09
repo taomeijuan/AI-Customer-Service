@@ -7,6 +7,9 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
+# 静默第三方 HTTP 客户端：httpx 每次 LLM/rerank 调用都打 INFO，serve.sh 终端刷屏
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpx2").setLevel(logging.WARNING)
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles

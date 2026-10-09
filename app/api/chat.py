@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from collections.abc import AsyncIterable
 from typing import Annotated
 
@@ -78,6 +79,7 @@ async def chat_stream(
     }
 
     deltas = 0
+    tool_frames = 0
     final_payload: dict = {}
     # 看门缓冲：模型在多步工具循环里可能给工具申请附带前导话术
     # （如 "I'll check your order..."），这类文字不属最终答案。
@@ -87,9 +89,10 @@ async def chat_stream(
     HOLD = 12
 
     def emit(event: str, data: dict) -> ServerSentEvent:
-        """统一出口：每个 SSE 帧落一行日志（serve.sh 终端可见，排查前端帧诊断）"""
-        preview = json.dumps(data, ensure_ascii=False)[:160]
-        logger.info("[sse] cid=%s event=%s data=%s", conversation_id, event, preview)
+        """统一出口。默认静默（终端不刷帧）；SSE_DEBUG=1 时逐帧落日志排查。"""
+        if os.getenv("SSE_DEBUG") == "1":
+            preview = json.dumps(data, ensure_ascii=False)[:160]
+            logger.info("[sse] cid=%s event=%s data=%s", conversation_id, event, preview)
         return ServerSentEvent(event=event, data=data)
 
     yield emit("meta", {"conversation_id": conversation_id})
@@ -125,6 +128,7 @@ async def chat_stream(
                 # agent_node get_stream_writer 推流：tool 帧 + log 节点产出
                 if isinstance(data, dict):
                     if "tool" in data:
+                        tool_frames += 1
                         yield emit("tool", data["tool"])
                     for k in ("final_text", "citations", "options"):
                         if k in data:
@@ -162,3 +166,8 @@ async def chat_stream(
     if final_payload.get("citations"):
         done_data["citations"] = final_payload["citations"]
     yield emit("done", done_data)
+
+    logger.info(
+        "stream done: cid=%s deltas=%d tool_frames=%d citations=%d",
+        conversation_id, deltas, tool_frames, len(final_payload.get("citations", [])),
+    )
