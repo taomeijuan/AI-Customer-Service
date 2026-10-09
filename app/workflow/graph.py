@@ -46,6 +46,10 @@ class WorkflowState(TypedDict, total=False):
     raw_query: str  # 用户原话（resolve 改写前的真源，落库用）
     order_no: str  # ch06 退款子流程选定的订单号
     order_brief: dict  # ch06 退款子流程订单摘要（options 帧随发到前端）
+    order_text: str  # ch07 退款子流程订单可读文本（进 material 注入）
+    order_instructions: str  # ch07 退款判定指令（refund_prep 产出，agent 装配）
+    ctx_history: list  # ch07 装配好的精简历史（层2截短+层1原文），节点喂模型用这个
+    ctx_projection: str  # ch07 梗概投影文本（api 层装配进 state）
     ctx_order_no: str  # ch06 消解器判定的订单槽位（问句直通；动作留空弹选择器）
 
 
@@ -103,8 +107,11 @@ def build_workflow(
         raw = state["query"]
         if resolver is None:
             return {"raw_query": raw, "ctx_order_no": ""}
+        history_src = state.get("ctx_history")
+        if history_src is None:
+            history_src = state.get("messages") or []  # 兼容图直调/旧接线
         try:
-            outcome = await resolver.resolve_detail(raw, state.get("messages") or [])
+            outcome = await resolver.resolve_detail(raw, list(history_src))
         except Exception as e:  # 双保险：Resolver 内部已兜底，图内再兜一层
             logger.warning("resolve node failed, pass-through: %s", e)
             return {"query": raw, "raw_query": raw, "ctx_order_no": ""}
@@ -147,14 +154,11 @@ def build_workflow(
             }
             for n, ev in enumerate(result.evidences, start=1)
         ]
-        # 知识条目以 [n] 编号消息注入 Agent（要求回答带角标引用）
-        knowledge = "\n\n".join(f"[{c['n']}] {c['question']}：{c['answer']}" for c in citations)
-        from langchain.messages import SystemMessage
-
+        # ch07：不再注入 SystemMessage——证据经 evidence 通道流动，
+        # 装配层把「梗概投影+检索证据」合成一条 user 挂当前句之后（防 system 上提）
         return {
             "evidence": citations,
             "refusal": False,
-            "messages": [SystemMessage(f"已检索到以下相关知识条目，回答时必须用 [n] 角标引用：\n{knowledge}")],
         }
 
     async def fallback(state: WorkflowState) -> dict:

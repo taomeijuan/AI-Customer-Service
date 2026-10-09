@@ -135,7 +135,12 @@ def build_agent_node(
     )
 
     async def agent_node(state: dict) -> dict:
+        import uuid as _uuid
+
+        from langchain.messages import AIMessage
         from langchain_core.messages import BaseMessage
+
+        from app.memory.context_builder import compose_material, log_model_ctx
 
         try:
             writer = get_stream_writer()
@@ -143,15 +148,16 @@ def build_agent_node(
             writer = lambda data: None
 
         cid = state.get("conversation_id")
-        turn = state.get("turn", 1)
-        thread_id = f"{cid}:{turn}"
+        # ch07：react 子图线程只服务本轮（工具循环内部记忆），跨轮史归主图 State
+        thread_id = str(_uuid.uuid4())
 
+        # ch07 装配：精简史来自 api 层 ctx_history（直调兼容 messages）；剥陈旧 [n]
+        src = state.get("ctx_history")
+        if src is None:
+            src = state.get("messages") or []
         injected: list = []
-        from langchain.messages import AIMessage
-
-        for m in state.get("messages") or []:
+        for m in src:
             if isinstance(m, BaseMessage):
-                # 剥掉历史 AI 回答的陈旧 [n]（当前轮次的知识注入 SystemMessage 不动）
                 if (
                     isinstance(m, AIMessage)
                     and not m.tool_calls
@@ -161,19 +167,35 @@ def build_agent_node(
                     m = m.model_copy(update={"content": _strip_stale_citations(m.content)})
                 injected.append(m)
             elif isinstance(m, dict) and m.get("content"):
-                injected.append(
-                    SystemMessage(m["content"]) if m.get("role") == "system" else HumanMessage(m["content"])
-                )
+                injected.append(HumanMessage(m["content"]))
 
-        evidence = list(state.get("evidence", []))  # 知识类路径的检索证据（如果有）
+        evidence = list(state.get("evidence", []))  # 知识/退款路径的检索证据
 
-        # 业务数据类：本轮强制工具指令紧跟用户问题上游（长历史防抄写）
-        if state.get("intent") in ("物流", "订单", "售后"):
-            injected.append(SystemMessage(BUSINESS_TURN_PROMPT))
+        # ch07 材料段：梗概投影 + 证据 + 任务指令（业务强制令 / 退款订单判定），
+        # 合成一条 user 挂当前句之后——不再以 system 注入（防上提合并毁前缀缓存）
+        extras: list[str] = []
+        if state.get("intent") in ("物流", "订单", "售后", "其他"):
+            extras.append(BUSINESS_TURN_PROMPT)
+        if state.get("order_text"):
+            extras.append(f"用户订单数据：{state['order_text']}")
+        if state.get("order_instructions"):
+            extras.append(state["order_instructions"])
+        material = compose_material(
+            settings,
+            projection=(state.get("ctx_projection") or "").strip() or None,
+            evidence=evidence or None,
+            extras=extras or None,
+        )
 
+        model_input = injected + [HumanMessage(state["query"])]
+        if material:
+            model_input.append(HumanMessage(material))
+        log_model_ctx(cid, material, injected, state["query"])
+
+        new_msgs: list = []
         try:
             result = await react.ainvoke(
-                {"messages": injected + [HumanMessage(state["query"])]},
+                {"messages": model_input},
                 config={
                     "configurable": {"thread_id": thread_id},
                     "recursion_limit": settings.max_agent_steps,
@@ -181,6 +203,7 @@ def build_agent_node(
                 },
             )
             msgs = result["messages"]
+            new_msgs = list(msgs[len(model_input):])
 
             # 提取最终回答（最后一条有内容的 AIMessage）
             final_text = ""
@@ -213,9 +236,10 @@ def build_agent_node(
             logger.warning("agent node failed (%s), fallback text", e)
             final_text = "这个问题我这边处理时遇到了一点困难，帮您转人工确认会更稳妥"
 
+        # ch07：本轮 react 新消息回吐主图 State（add_messages 按序并入，随 checkpoint 落盘）
         return {
             "final_text": final_text,
-            "messages": [],
+            "messages": new_msgs,
             "evidence": evidence,
         }
 

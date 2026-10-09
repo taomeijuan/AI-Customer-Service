@@ -98,10 +98,11 @@ async def test_refund_with_order_no_goes_straight_through():
     assert [c["chunk_id"] for c in out["evidence"]] == [21, 22]
     assert out["order_no"] == "1001"
     assert retriever.multi_called_with == ["七天无理由退货条件", "拆封商品能否退货"]
-    # 订单数据进了 Agent 注入消息
-    injected = str(agent.calls[0].get("messages") or [])
-    assert "扫地机器人" in injected or "订单 1001" in injected
-    assert "七天无理由" in injected
+    # ch07：订单数据与判定指令走 state 通道（agent 装配进 material），证据在 evidence
+    st = agent.calls[0]
+    assert "扫地机器人" in st.get("order_text", "")
+    assert "能不能退" in st.get("order_instructions", "")
+    assert st["evidence"] and "七天无理由" in str(st["evidence"])
 
 
 async def test_refund_without_order_no_interrupts_then_resumes():

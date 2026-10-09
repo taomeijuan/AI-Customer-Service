@@ -116,10 +116,10 @@ async def test_business_turn_force_prompt_injected(session_factory, db_session):
         {"query": "订单1001到哪里了", "messages": [], "conversation_id": 1, "turn": 1, "intent": "物流"}
     )
     sent = llm.invocations[0]
-    # 最后一条是用户 HumanMessage，其前一条是强制指令
-    assert isinstance(sent[-1], HumanMessage)
-    assert "本轮强制要求" in sent[-2].content
-    assert "两步都做" in sent[-2].content
+    # ch07 装配：当前句在前，material（含强制工具令）作为最后一条 user 挂其后
+    assert isinstance(sent[-1], HumanMessage) and "本轮强制要求" in sent[-1].content
+    assert "两步都做" in sent[-1].content
+    assert sent[-2].text == "订单1001到哪里了"
     assert out["final_text"] == "final"
 
 

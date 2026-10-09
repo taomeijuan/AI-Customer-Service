@@ -4,13 +4,14 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from langchain.messages import AIMessage, ToolMessage
+from langchain.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.language_models import BaseChatModel
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy import select
 
 from app.db.models import Conversation
+from app.repositories.messages import MessagesRepo
 from app.knowledge.retriever import RetrievalResult
 from app.knowledge.reranker import Evidence
 from app.main import create_app
@@ -94,7 +95,7 @@ def _make_workflow(session_factory, classifier_intent="物流", retriever=None, 
         agent_node=agent or _FakeAgent(),
         intent_classifier=_FakeClassifier(classifier_intent),
         session_factory=session_factory,
-
+        checkpointer=InMemorySaver(),  # ch07 会话级线程：aget_state 需要 checkpointer
     )
 
 
@@ -523,3 +524,97 @@ async def test_abandoned_selector_not_hijacked(session_factory, db_session):
         assert "order_selector" not in kinds2, "新消息被挂起的旧选择器劫持"
         deltas = "".join(v["text"] for e, v in ev2 if e == "delta")
         assert deltas  # 闲聊话术正常流出
+
+
+async def test_abandoned_selector_cancelled_not_hijacked(session_factory, db_session):
+    """ch07 T8：点选挂起后发新消息 → 旧中断静默取消，新消息按自己的意图走。"""
+    from langgraph.types import interrupt as _interrupt
+
+    def _selector_prep(state):
+        from app.tools.ecommerce import orders_summary
+
+        _interrupt({"type": "order_selector", "orders": orders_summary(), "question": state["query"]})
+        return {"final_text": "已取消", "refusal": False, "evidence": [], "order_no": ""}
+
+    class _RouterClassifier(_FakeClassifier):
+        async def classify_detail(self, query):
+            from app.workflow.intent import ClassifyOutcome
+
+            intent = "退款退货" if "退" in query else "闲聊"
+            return ClassifyOutcome(intent=intent, confidence=0.9)
+
+    app = create_app()
+    app.state.session_factory = session_factory
+    app.state.workflow = build_workflow(
+        retriever=_FakeRetriever(RetrievalResult(evidences=[], low_confidence=False)),
+        agent_node=_FakeAgent(text="不该走到这"),
+        intent_classifier=_RouterClassifier("闲聊"),
+        session_factory=session_factory,
+        refund_prep=_selector_prep,
+        checkpointer=InMemorySaver(),
+    )
+    async with _client(app) as c:
+        r1 = await c.post("/api/chat/stream", json={"user_id": "u1", "message": "我要退款", "conversation_id": None})
+        cid = sse_events(r1.text)[0][1]["conversation_id"]
+        assert "order_selector" in [e for e, _ in sse_events(r1.text)]
+
+        r2 = await c.post("/api/chat/stream", json={"user_id": "u1", "message": "你好", "conversation_id": cid})
+        kinds2 = [e for e, _ in sse_events(r2.text)]
+        assert "order_selector" not in kinds2  # 未被旧选择器劫持
+        text2 = "".join(v["text"] for e, v in sse_events(r2.text) if e == "delta")
+        assert text2  # 闲聊轮正常出话术
+    async with session_factory() as session:
+        msgs = await MessagesRepo(session).load_history(cid)
+    texts = [m.text for m in msgs]
+    assert "我要退款" in texts and "你好" in texts
+    assert any("已取消" in t for t in texts)  # 取消轮也落了库
+
+
+async def test_history_ctx_logged_including_chitchat(session_factory, db_session, caplog):
+    import logging as _logging
+
+    app = create_app()
+    app.state.session_factory = session_factory
+    app.state.workflow = _make_workflow(session_factory, classifier_intent="闲聊")
+    with caplog.at_level(_logging.INFO, logger="app.memory.context_builder"):
+        async with _client(app) as c:
+            await c.post("/api/chat/stream", json={"user_id": "u1", "message": "在吗", "conversation_id": None})
+    assert "history_ctx" in caplog.text and "当前句: 在吗" in caplog.text
+
+
+async def test_resync_no_duplicate_history(session_factory, db_session):
+    """两轮后 DB 恰 4 条、State 不重（wipe+resync 语义）。"""
+    agent = _FakeAgent(text="回答")
+    app = create_app()
+    app.state.session_factory = session_factory
+    app.state.workflow = _make_workflow(session_factory, classifier_intent="闲聊", agent=agent)
+    async with _client(app) as c:
+        r1 = await c.post("/api/chat/stream", json={"user_id": "u1", "message": "第一句", "conversation_id": None})
+        cid = sse_events(r1.text)[0][1]["conversation_id"]
+        await c.post("/api/chat/stream", json={"user_id": "u1", "message": "第二句", "conversation_id": cid})
+    async with session_factory() as session:
+        msgs = await MessagesRepo(session).load_history(cid)
+    assert len(msgs) == 4  # 2 问 2 答
+    snap = await app.state.workflow.aget_state(
+        {"configurable": {"thread_id": f"ctx-{cid}"}}
+    )
+    hist_ids = [m.text for m in snap.values.get("messages", [])]
+    assert hist_ids.count("第一句") == 1  # State 里也不翻倍
+
+
+async def test_agent_receives_trimmed_ctx_history(session_factory, db_session):
+    """agent 吃装配器的精简史（ctx_history），不是原始 messages。"""
+    from types import SimpleNamespace as _NS
+
+    agent = _FakeAgent(text="ok")
+    app = create_app()
+    app.state.session_factory = session_factory
+    app.state.workflow = _make_workflow(session_factory, classifier_intent="物流", agent=agent)
+    app.state.context_budget = _NS(layer1=5, layer2=5000, history=5005)  # 层1极小逼出截短
+    async with _client(app) as c:
+        r1 = await c.post("/api/chat/stream", json={"user_id": "u1", "message": "长问" + "句" * 40, "conversation_id": None})
+        cid = sse_events(r1.text)[0][1]["conversation_id"]
+        await c.post("/api/chat/stream", json={"user_id": "u1", "message": "第二问", "conversation_id": cid})
+    st = agent.calls[-1]
+    assert st.get("ctx_history") is not None
+    assert all("…" not in (m.text or "") for m in st["messages"] if isinstance(m, HumanMessage))  # 层2截短只作用于assistant

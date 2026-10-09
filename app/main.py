@@ -11,6 +11,13 @@ logging.basicConfig(
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpx2").setLevel(logging.WARNING)
 
+# ch07 上下文可观测：同一条 INFO 流双写 stderr + log/app.log（model_ctx/history_ctx 可 grep）
+_LOG_DIR = Path(__file__).resolve().parents[1] / "log"
+_LOG_DIR.mkdir(exist_ok=True)
+logging.getLogger().addHandler(
+    logging.FileHandler(_LOG_DIR / "app.log", encoding="utf-8")
+)
+
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
@@ -104,8 +111,9 @@ def create_app() -> FastAPI:
         retriever=retriever,
         expander=Expander(build_structured_model(model, ExpansionSchema)),  # ch06 Query 扩写
     )
-    app.state.pending_resumes = {}  # ch06 槽位：conversation_id → 中断 thread_id
-    app.state.turn_counters = {}  # 评审 M2：轮次单调计数器（与检查点同生命周期）
+    from app.memory.summarizer import Summarizer
+
+    app.state.summarizer = Summarizer(model, app.state.session_factory, settings)
     app.state.workflow = build_workflow(
         retriever=retriever,
         agent_node=agent_node,

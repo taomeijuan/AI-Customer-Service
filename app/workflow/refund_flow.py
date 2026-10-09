@@ -11,7 +11,6 @@ import logging
 import re
 from typing import Any
 
-from langchain.messages import SystemMessage
 from langgraph.config import get_stream_writer
 from langgraph.types import interrupt
 
@@ -100,19 +99,16 @@ def build_refund_prep(
         ]
         knowledge = "\n\n".join(f"[{c['n']}] {c['question']}：{c['answer']}" for c in citations)
 
+        # ch07：不再注入 SystemMessage——订单文本与判定指令走 state 通道，
+        # 由 agent 装配进 material（证据在 evidence 通道，编号沿用）
         return {
             "order_no": order_no,
             "evidence": citations,
             "refusal": False,
-            # m4：options 帧带订单摘要，前端表单不再依赖全局 lastOrder
             "options": ["申请退款"],
             "order_brief": {"order_no": order_no, "product": order["product"], "amount": order["amount"]},
-            "messages": [
-                SystemMessage(
-                    f"已检索到以下政策条款，回答时必须用 [n] 角标引用：\n{knowledge}\n\n"
-                    f"用户订单数据：{order_text}\n\n{REFUND_INJECT_PROMPT}"
-                )
-            ],
+            "order_text": order_text,
+            "order_instructions": REFUND_INJECT_PROMPT,
         }
 
     return refund_prep

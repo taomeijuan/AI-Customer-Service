@@ -60,30 +60,12 @@ def build_context(
     )
     history = [*plan.layer2, *plan.layer1]
 
-    parts: list[str] = []
-    if summary_projection:
-        parts.append(MATERIAL_HEADER)
-        parts.append(f"早期对话梗概：\n{summary_projection}")
-    if evidence:
-        if not parts:
-            parts.append(MATERIAL_HEADER)
-        # 证据条数与单条长度受 RERANK_TOP_K×单条预留 总预算封顶
-        cap = settings.rerank_top_k * settings.evidence_per_item_reserve
-        lines: list[str] = []
-        used = estimate_tokens("\n".join(lines)) if lines else 0
-        for i, ev in enumerate(evidence[: settings.rerank_top_k], start=1):
-            line = f"[{i}] {ev.get('question', '')}：{ev.get('answer', '')}"
-            cost = estimate_tokens(line)
-            if lines and used + cost > cap:
-                break
-            lines.append(line)
-            used += cost
-        parts.append("检索证据（回答引用用 [n]）：\n" + "\n".join(lines))
+    material = compose_material(settings, projection=summary_projection, evidence=evidence)
 
     ctx = ModelContext(
         history=history,
         query=query,
-        material="\n\n".join(parts) if parts else None,
+        material=material,
         plan=plan,
     )
     ctx.tokens_est = (
@@ -92,6 +74,40 @@ def build_context(
         + (estimate_tokens(ctx.material) if ctx.material else 0)
     )
     return ctx
+
+
+def compose_material(
+    settings: Any,
+    projection: str | None = None,
+    evidence: list[dict] | None = None,
+    extras: list[str] | None = None,
+) -> str | None:
+    """梗概投影 + 检索证据 + 任务指令（订单数据/强制工具令）合成一段文本。
+
+    证据双帽：条数 = RERANK_TOP_K；总量 = K × 单条预留，先到先截（至少留 1 条）。
+    """
+    parts: list[str] = []
+    has_body = bool(projection or evidence or extras)
+    if has_body:
+        parts.append(MATERIAL_HEADER)
+    if projection:
+        parts.append(f"早期对话梗概：\n{projection}")
+    if evidence:
+        cap = settings.rerank_top_k * settings.evidence_per_item_reserve
+        lines: list[str] = []
+        used = 0
+        for i, ev in enumerate(evidence[: settings.rerank_top_k], start=1):
+            line = f"[{i}] {ev.get('question', '')}：{ev.get('answer', '')}"
+            cost = estimate_tokens(line)
+            if lines and used + cost > cap:
+                break
+            lines.append(line)
+            used += cost
+        parts.append("检索证据（回答引用用 [n]）：\n" + "\n".join(lines))
+    for x in extras or []:
+        if x:
+            parts.append(x)
+    return "\n\n".join(parts) if parts else None
 
 
 def assemble_model_messages(
@@ -141,3 +157,22 @@ def log_context(kind: str, conversation_id: Any, ctx: ModelContext, budget: Any)
 def _mtype(m: BaseMessage) -> str:
     t = m.type
     return {"human": "user", "ai": "assistant", "tool": "tool"}.get(t, t)
+
+
+def log_model_ctx(conversation_id, material: str | None, history: list, query: str) -> None:
+    """Agent 每轮 model_ctx：材料全文 + 滑窗逐条 + 条数 + tokens 估算（需求 6）。"""
+    from app.memory.tokens import count_message_tokens
+
+    hist_tok = sum(count_message_tokens(m) for m in history)
+    total = hist_tok + estimate_tokens(query) + (estimate_tokens(material) if material else 0)
+    logger.info(
+        "model_ctx conv=%s | 滑窗 %d 条 ≈%d tok | 材料 %d tok | 总送模型 ≈%d tok",
+        conversation_id, len(history), hist_tok,
+        estimate_tokens(material) if material else 0, total,
+    )
+    if material:
+        logger.info("model_ctx conv=%s | 材料全文 ↓\n%s", conversation_id, material)
+    for m in history:
+        text = (m.text or "").replace("\n", "⏎")
+        logger.info("model_ctx conv=%s | %s: %s", conversation_id, _mtype(m), text[:80])
+    logger.info("model_ctx conv=%s | 当前句: %s", conversation_id, query[:80])
