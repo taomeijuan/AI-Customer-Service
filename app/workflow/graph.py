@@ -42,6 +42,7 @@ class WorkflowState(TypedDict, total=False):
     refusal: bool  # 置信度闸拦截标记
     final_text: str  # 最终回复文本（各路径产出）
     turn: int
+    raw_query: str  # 用户原话（resolve 改写前的真源，落库用）
 
 
 def _route_by_intent(state: WorkflowState) -> Literal["retrieve", "agent", "comfort", "chitchat"]:
@@ -68,12 +69,22 @@ def build_workflow(
     agent_node: Any,  # async callable(state) -> {"final_text", "messages", "evidence"}
     intent_classifier: Any,  # async classify(query) -> IntentName
     session_factory: Any | None,
+    resolver: Any | None = None,  # ch06：async resolve(query, history) -> str；None=透传
     checkpointer: Any | None = None,
 ):
     """组装工作流图。agent_node 由 build_agent_node 产出（create_react_agent 子图包装）。"""
 
     async def resolve(state: WorkflowState) -> dict:
-        return {}  # 指代消解本章透传
+        """ch06 正式版：LLM 指代消解+改写；未注入 resolver 或消解失败均透传。"""
+        raw = state["query"]
+        if resolver is None:
+            return {"raw_query": raw}
+        try:
+            resolved = await resolver.resolve(raw, state.get("messages") or [])
+        except Exception as e:  # 双保险：Resolver 内部已兜底，图内再兜一层
+            logger.warning("resolve node failed, pass-through: %s", e)
+            resolved = raw
+        return {"query": resolved, "raw_query": raw}
 
     async def intent(state: WorkflowState) -> dict:
         try:
@@ -145,7 +156,7 @@ def build_workflow(
 
                 await MessagesRepo(session).append(
                     state["conversation_id"],
-                    [HumanMessage(state["query"]), AIMessage(text)],
+                    [HumanMessage(state.get("raw_query") or state["query"]), AIMessage(text)],
                 )
         return {}
 

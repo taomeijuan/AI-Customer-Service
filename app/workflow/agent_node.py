@@ -5,7 +5,6 @@
 
 import json
 import logging
-import re
 from typing import Any
 
 from langchain.messages import HumanMessage, SystemMessage, ToolMessage
@@ -13,6 +12,8 @@ from langchain_core.callbacks import AsyncCallbackHandler
 from langgraph.config import get_stream_writer
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.prebuilt import create_react_agent
+
+from app.workflow.text import CITE_RE as _CITE_RE, strip_stale_citations as _strip_stale_citations
 
 logger = logging.getLogger(__name__)
 
@@ -24,14 +25,6 @@ BUSINESS_TURN_PROMPT = (
     "用户提到订单号时先调用 query_order 查订单状态、再调用 query_logistics 查物流轨迹，两步都做。"
     "即使对话历史里已有相似问题的答案，也必须重新调用工具核实，禁止直接抄历史答案或编造数据。"
 )
-
-# 陈旧角标：历史 AI 回答里的 [n] 只属于当时的轮次，本轮没有对应证据。
-# 不剥掉的话模型会把旧编号直接抄进新答案，前端拿到 citations 对不上 → 死文本。
-_CITE_RE = re.compile(r"\[\d+\]")
-
-
-def _strip_stale_citations(text: str) -> str:
-    return _CITE_RE.sub("", text)
 
 
 def _tool_answer_to_text(name: str, raw: str) -> str:

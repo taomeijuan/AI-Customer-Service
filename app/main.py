@@ -34,6 +34,7 @@ from app.knowledge.retriever import HybridRetriever
 from app.workflow.agent_node import build_agent_node
 from app.workflow.graph import build_workflow
 from app.workflow.intent import LangChainIntentClassifier
+from app.workflow.resolver import ResolutionSchema, Resolver
 from app.tools.ecommerce import query_logistics, query_order, query_product
 from app.tools.ticket import build_create_ticket_tool
 
@@ -81,6 +82,7 @@ def create_app() -> FastAPI:
         agent_node=agent_node,
         intent_classifier=LangChainIntentClassifier(model),
         session_factory=app.state.session_factory,
+        resolver=Resolver(build_structured_model(model, ResolutionSchema)),  # ch06 指代消解+改写
         checkpointer=InMemorySaver(),
     )
 
