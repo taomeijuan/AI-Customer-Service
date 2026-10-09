@@ -15,28 +15,18 @@ ch01 的 trim_history / ch02 的 trim_history_groups：单一预算（token_budg
 
 **降级只挪两个锚点、不搬数据**：`layer1_from_msg_id`（层1 起点）、`summary_upto_msg_id`（摘要覆盖到哪条），都加在 conversations 表列上；messages 表永远存完整原文，各层只是读法。
 
-## 2. 摘要表 DDL（新增 db/init/07-ch07.sql，双库应用）
+## 2. 表结构 DDL（用户提供，为唯一权威；db/init/07-ch07.sql + 07-ch07-layers.sql，scripts/init_ch07.sh 双库应用——已应用）
 
-```sql
-CREATE TABLE IF NOT EXISTS `conversation_summaries` (
-  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
-  `conversation_id` bigint unsigned NOT NULL COMMENT '所属会话',
-  `seq` int NOT NULL COMMENT '段序号，从1递增；一段一行只追加不改写',
-  `summary` varchar(1024) NOT NULL COMMENT '梗概正文（几十到一两百字）',
-  `from_msg_id` bigint unsigned NOT NULL COMMENT '本段覆盖的起始消息 id',
-  `upto_msg_id` bigint unsigned NOT NULL COMMENT '本段覆盖的截止消息 id（边界）',
-  `token_count` int NOT NULL DEFAULT 0 COMMENT '梗概自身的折算 token 数',
-  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_conv_seq` (`conversation_id`,`seq`),
-  KEY `idx_conv_upto` (`conversation_id`,`upto_msg_id`),
-  CONSTRAINT `fk_summary_conversation` FOREIGN KEY (`conversation_id`) REFERENCES `conversations` (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='会话摘要段（ch07）';
+分层边界全部用消息 id 表达、不搬数据（用户 DDL 注释原义）：
 
-ALTER TABLE `conversations`
-  ADD COLUMN `summary_upto_msg_id` bigint unsigned NOT NULL DEFAULT 0 COMMENT '摘要覆盖边界（0=无）',
-  ADD COLUMN `layer1_from_msg_id` bigint unsigned NOT NULL DEFAULT 0 COMMENT '层1起点锚（0=未设）';
 ```
+id ≤ summary_upto_msg_id          → 层0：已进摘要，不再进窗口
+summary_upto < id ≤ layer1_from   → 层2：渲染成半压形态
+id > layer1_from                  → 层1：原样
+```
+
+- `conversations` 加三列：`summary`（**投影**：最近几段梗概拼成的正文，拼装时直接读、与证据一起挂用户句后）、`summary_upto_msg_id`、`layer1_from_msg_id`（锚点，NULL=未设）。
+- `conversation_summaries`：`seq` 从 1 递增、`from_msg_id/upto_msg_id` 闭区间、一段一行**只追加不回炉**（滚动重写会让最早内容被压 N 次、订单号丢了都查不出——DDL 注释原义）。投影可随时从分段表重组，丢旧段是视图级不是数据级。
 
 ## 3. 异步摘要链路（不阻塞当前轮）
 
