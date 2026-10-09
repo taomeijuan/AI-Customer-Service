@@ -131,8 +131,13 @@ async def chat_stream(
         )
         log_context("history_ctx", conversation_id, ctx, budget)
 
-        # ③ 层1锚只前进持久化（降级=挪锚不搬数据）
+        # ③ 层1锚只前进持久化（降级=挪锚不搬数据），降级留痕
         if ctx.plan.new_layer1_from and (conv.layer1_from_msg_id or 0) < ctx.plan.new_layer1_from:
+            logger.info(
+                "layer1 demote: conv=%s 锚 %s→%s（层1=%d条/%dtok，层2现%d条/%dtok）",
+                conversation_id, conv.layer1_from_msg_id or "∅", ctx.plan.new_layer1_from,
+                len(ctx.plan.layer1), ctx.plan.layer1_tokens, len(ctx.plan.layer2), ctx.plan.layer2_tokens,
+            )
             async with session_factory() as session:
                 row = await session.get(Conversation, conversation_id)
                 row.layer1_from_msg_id = ctx.plan.new_layer1_from

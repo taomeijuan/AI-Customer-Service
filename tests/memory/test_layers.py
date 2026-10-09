@@ -96,3 +96,26 @@ def test_summary_upto_excludes_layer0():
 def test_empty_input():
     plan = _split([])
     assert not plan.layer1 and not plan.layer2 and not plan.summarize_batch
+
+
+def test_default_window_20_rounds_zero_demote_zero_summary():
+    """验收 3：默认配置预算（6720/2880）下 20 轮正常对话不应触发任何降级/摘要。"""
+    from app.core.config import get_settings
+    from app.memory.budget import compute_budget
+
+    b = compute_budget(get_settings())
+    assert b.layer1 == 6720 and b.layer2 == 2880
+    rounds = []
+    mid = 1
+    for k in range(20):
+        rounds.append([(mid, HumanMessage(f"问题{k}：这单物流到哪了")), (mid + 1, AIMessage(f"回答{k}：已到杭州转运中心，预计明天派送"))])
+        mid += 2
+    pairs = [p for r in rounds for p in r]
+    plan = split_layers(
+        pairs, summary_upto=0, layer1_from=None,
+        layer1_budget=b.layer1, layer2_budget=b.layer2,
+        trunc_chars=80,
+    )
+    assert not plan.layer2, "装得下就不压：层2 应为空"
+    assert not plan.summarize_batch, "不该触发摘要"
+    assert len(plan.layer1) == 40
