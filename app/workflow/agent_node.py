@@ -9,6 +9,7 @@ import re
 from typing import Any
 
 from langchain.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.callbacks import AsyncCallbackHandler
 from langgraph.config import get_stream_writer
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.prebuilt import create_react_agent
@@ -32,6 +33,40 @@ _CITE_RE = re.compile(r"\[\d+\]")
 def _strip_stale_citations(text: str) -> str:
     return _CITE_RE.sub("", text)
 
+
+class _ToolFrameHandler(AsyncCallbackHandler):
+    """把 ReAct 子图内工具执行实时推成 running/done 帧（与回答 token 流交错）。
+
+    ch05.8 前工具帧在 react.ainvoke 返回后才补推 → 前端先看到完整答案、
+    后冒 chips。回调版在工具真正启动/结束的当刻推帧：running → （查询中）
+    done，前端 chips 在回答流出前就位。
+    """
+
+    def __init__(self, writer) -> None:
+        self._writer = writer
+        self._stack: list[dict] = []  # react 顺序执行，栈深恒 ≤1
+
+    async def on_tool_start(self, serialized, input_str, **kwargs) -> None:
+        name = serialized.get("name", "tool") if isinstance(serialized, dict) else "tool"
+        args: dict = {}
+        if isinstance(input_str, str) and input_str:
+            try:
+                parsed = json.loads(input_str)
+                if isinstance(parsed, dict):
+                    args = parsed
+            except Exception:
+                pass
+        self._stack.append({"name": name, "args": args})
+        self._writer({"tool": {"tool": name, "args": args, "status": "running", "ok": True}})
+
+    async def on_tool_end(self, output, **kwargs) -> None:
+        meta = self._stack.pop() if self._stack else {"name": "tool", "args": {}}
+        self._writer({"tool": {"tool": meta["name"], "args": meta["args"], "status": "done", "ok": True}})
+
+    async def on_tool_error(self, error, **kwargs) -> None:
+        meta = self._stack.pop() if self._stack else {"name": "tool", "args": {}}
+        self._writer({"tool": {"tool": meta["name"], "args": meta["args"], "status": "done", "ok": False}})
+
 AGENT_SYSTEM_PROMPT = """你是"商城小助手"，一家电商平台的智能客服，可以调用工具查询实时数据。
 
 职责范围：只回答与电商购物相关的问题（商品、订单、支付、物流、售后）。
@@ -42,6 +77,7 @@ AGENT_SYSTEM_PROMPT = """你是"商城小助手"，一家电商平台的智能�
    - 用户提到具体订单号（如 1001）→ 必须先调用 query_order 查订单状态，再调用 query_logistics 查物流轨迹（两步都做）。
    - 只问商品信息 → 调用 query_product。
    - 工具返回的数据可以如实转述给用户。
+   - 调用工具时只输出工具调用本身，不要附加任何说明文字（工具执行完再组织答案）。
 3. 对话历史里用户已经说过的信息，直接引用作答，这不属于编造。
 4. 回答中引用工具返回的数据时，在句末标注来源 [n]（n 从 1 开始按引用顺序编号）。
 5. 涉及退款金额、投诉升级等超出工具能力的问题，建议用户转人工或建工单。
@@ -105,6 +141,7 @@ def build_agent_node(
                 config={
                     "configurable": {"thread_id": thread_id},
                     "recursion_limit": settings.agent_max_steps,
+                    "callbacks": [_ToolFrameHandler(writer)],
                 },
             )
             msgs = result["messages"]
@@ -133,10 +170,8 @@ def build_agent_node(
                         "answer": m.content[:500],
                     })
 
-            # 提取 AIMessage.tool_calls → 推 tool 帧
-            for m in msgs:
-                for tc in getattr(m, "tool_calls", None) or []:
-                    writer({"tool": {"tool": tc["name"], "args": tc.get("args", {}), "status": "done", "ok": True}})
+            # 提取 AIMessage.tool_calls 的产出已由 _ToolFrameHandler 实时推帧，
+            # 这里不再补推（避免与回调帧重复）。
 
         except Exception as e:
             logger.warning("agent node failed (%s), fallback text", e)

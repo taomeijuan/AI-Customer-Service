@@ -217,7 +217,11 @@ async def test_done_carries_citations_for_knowledge(client):
 
 
 async def test_subgraph_tokens_streamed_as_deltas(session_factory, db_session):
-    """生命线：subgraphs=True 让 ReAct 子图内 LLM token 冒出为 delta。"""
+    """生命线：subgraphs=True 让 ReAct 子图内 LLM token 冒出为 delta。
+
+    断言粒度=token 级：脚本模型一次吐 6 字 → 必须恰好 1 个 delta 帧原文直出。
+    （若退化成尾部 3 字切片兜底，同一文本会被切成 4 帧，此测试即红。）
+    """
 
     class ScriptedModel(BaseChatModel):
         steps: list
@@ -251,7 +255,10 @@ async def test_subgraph_tokens_streamed_as_deltas(session_factory, db_session):
             json={"user_id": "u1", "message": "订单1001", "conversation_id": None},
         )
     deltas = [v for e, v in sse_events(resp.text) if e == "delta"]
-    assert "".join(d["text"] for d in deltas) == "Agent 已查明"
+    assert len(deltas) == 1  # token 级直出，不是 3 字切片
+    assert deltas[0]["text"] == "Agent 已查明"
+    done = [v for e, v in sse_events(resp.text) if e == "done"]
+    assert done  # done 帧仍在
 
 
 def _order_stub():
@@ -263,6 +270,58 @@ def _order_stub():
         return {"order_no": order_no}
 
     return query_order
+
+
+async def test_tool_frames_realtime_before_deltas(session_factory, db_session):
+    """工具帧由回调在工具执行当刻推（running→done），先于最终回答的 token 流；
+    工具申请/结果消息不得泄漏进 delta。"""
+
+    class ScriptedModel(BaseChatModel):
+        calls: int = 0
+
+        @property
+        def _llm_type(self):
+            return "scripted"
+
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                msg = AIMessage(
+                    content="我先查一下",  # 工具申请附带的前导话术：不得泄漏为 delta
+                    tool_calls=[{"name": "query_order", "args": {"order_no": "1001"}, "id": "c1", "type": "tool_call"}],
+                )
+            else:
+                msg = AIMessage(content="最终答案")
+            return ChatResult(generations=[ChatGeneration(message=msg)])
+
+    app = create_app()
+    app.state.session_factory = session_factory
+    agent = build_agent_node(
+        llm=ScriptedModel(),
+        tools=[_order_stub()],
+        settings=SimpleNamespace(agent_max_steps=6),
+        checkpointer=InMemorySaver(),
+    )
+    app.state.workflow = _make_workflow(
+        session_factory=session_factory, classifier_intent="物流", agent=agent
+    )
+    async with _client(app) as c:
+        resp = await c.post(
+            "/api/chat/stream",
+            json={"user_id": "u1", "message": "订单1001", "conversation_id": None},
+        )
+    events = sse_events(resp.text)
+    seq = [e for e, _ in events]
+    deltas = [v["text"] for e, v in events if e == "delta"]
+    tool_frames = [v for e, v in events if e == "tool"]
+    assert [f["status"] for f in tool_frames] == ["running", "done"]  # 回调双帧
+    assert tool_frames[0]["tool"] == "query_order"
+    assert "".join(deltas) == "最终答案"  # 工具申请/ToolMessage/前导话术均未污染 delta
+    assert "我先查一下" not in "".join(deltas)
+    assert seq.index("tool") < seq.index("delta")  # chips 先于回答文字就位
 
 
 async def test_empty_message_422(client):
