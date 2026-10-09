@@ -17,6 +17,7 @@ from langgraph.graph.message import add_messages
 from typing_extensions import Annotated
 
 from app.repositories.low_confidence import LowConfidenceRepo
+from app.workflow.intent import INTENT_LOW_CONF_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
@@ -46,12 +47,12 @@ class WorkflowState(TypedDict, total=False):
 
 
 def _route_by_intent(state: WorkflowState) -> Literal["retrieve", "agent", "comfort", "chitchat"]:
-    """分流规则写死在代码里：七类意图 → 四个出口。"""
+    """分流规则写死在代码里：八类意图 → 四出口（ch06：其他→Agent 兜底）。"""
     intent = state["intent"]
     if intent in ("商品咨询", "退款退货"):
-        return "retrieve"  # 知识类：强制先检索
-    if intent in ("物流", "订单", "售后"):
-        return "agent"  # 业务数据类：直接进 Agent
+        return "retrieve"  # 知识类：强制先检索（退款子流程 ch06 T8 接入后改道）
+    if intent in ("物流", "订单", "售后", "其他"):
+        return "agent"  # 业务数据类直接进 Agent；其他=拿不准也交给 Agent 澄清
     if intent == "投诉":
         return "comfort"
     return "chitchat"  # 闲聊
@@ -87,12 +88,26 @@ def build_workflow(
         return {"query": resolved, "raw_query": raw}
 
     async def intent(state: WorkflowState) -> dict:
+        # ch06：classify_detail 拿置信度；分类器自带兜底，这里再兜一层防接口异常
         try:
-            value = await intent_classifier.classify(state["query"])
-        except Exception as e:  # 分类器挂掉不炸图：兜底业务数据类直进 Agent
+            outcome = await intent_classifier.classify_detail(state["query"])
+            value, confidence = outcome.intent, outcome.confidence
+        except Exception as e:
             logger.warning("intent classifier failed, fallback to 订单: %s", e)
-            value = FALLBACK_INTENT
-        logger.info("intent=%s query=%s", value, state["query"])
+            value, confidence = FALLBACK_INTENT, 0.0
+        logger.info("intent=%s confidence=%.2f query=%s", value, confidence, state["query"])
+        if confidence < INTENT_LOW_CONF_THRESHOLD and session_factory is not None and state.get("conversation_id"):
+            # 数据飞轮入口：拿不准的问题进池，ch09 用用户反馈校准；入池失败不炸会话
+            try:
+                async with session_factory() as session:
+                    await LowConfidenceRepo(session).record(
+                        raw_question=state["query"],
+                        source="intent_low_conf",
+                        reason=f"意图置信度低：{value}({confidence:.2f})",
+                        conversation_id=state.get("conversation_id"),
+                    )
+            except Exception as e:
+                logger.warning("intent low-conf pool record failed: %s", e)
         return {"intent": value}
 
     async def retrieve(state: WorkflowState) -> dict:

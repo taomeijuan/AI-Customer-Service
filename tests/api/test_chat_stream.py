@@ -41,6 +41,11 @@ class _FakeClassifier:
     def __init__(self, intent):
         self.intent = intent
 
+    async def classify_detail(self, query):
+        from app.workflow.intent import ClassifyOutcome
+
+        return ClassifyOutcome(intent=self.intent, confidence=0.9)
+
     async def classify(self, query):
         return self.intent
 

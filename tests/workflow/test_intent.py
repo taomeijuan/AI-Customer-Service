@@ -23,12 +23,34 @@ def make_classifier(content=None, status=200):
 
 
 def test_intents_registry():
-    assert INTENTS == {"物流", "订单", "商品咨询", "退款退货", "售后", "投诉", "闲聊"}
+    assert INTENTS == {"物流", "订单", "商品咨询", "退款退货", "售后", "投诉", "闲聊", "其他"}
 
 
 async def test_parse_valid_intent():
-    c, _ = make_classifier(json.dumps({"intent": "物流"}))
+    c, _ = make_classifier(json.dumps({"intent": "物流", "confidence": 0.9}))
     assert await c.classify("订单1001的物流到哪了") == "物流"
+
+
+async def test_classify_detail_carries_confidence():
+    c, _ = make_classifier(json.dumps({"intent": "其他", "confidence": 0.3}))
+    outcome = await c.classify_detail("帮我看看那个单子")
+    assert outcome.intent == "其他"
+    assert outcome.confidence == 0.3
+
+
+async def test_confidence_missing_defaults_half():
+    """模型漏了 confidence 字段不炸：默认 0.5，intent 照常返回。"""
+    c, _ = make_classifier(json.dumps({"intent": "物流"}))
+    outcome = await c.classify_detail("到哪了")
+    assert outcome.intent == "物流"
+    assert outcome.confidence == 0.5
+
+
+async def test_fallback_outcome_has_zero_confidence():
+    c, _ = make_classifier(content="not json")
+    outcome = await c.classify_detail("随便")
+    assert outcome.intent == "订单"
+    assert outcome.confidence == 0.0
 
 
 async def test_parse_failure_falls_back_to_business():

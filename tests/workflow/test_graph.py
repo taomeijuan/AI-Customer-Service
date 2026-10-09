@@ -29,6 +29,13 @@ class FakeClassifier:
         self.intent = intent
         self.error = error
 
+    async def classify_detail(self, query):
+        from app.workflow.intent import ClassifyOutcome
+
+        if self.error:
+            raise RuntimeError("LLM 挂了")
+        return ClassifyOutcome(intent=self.intent, confidence=0.9)
+
     async def classify(self, query):
         if self.error:
             raise RuntimeError("LLM 挂了")
