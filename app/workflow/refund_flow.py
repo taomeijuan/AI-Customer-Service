@@ -47,15 +47,21 @@ def build_refund_prep(
 
         query = state["query"]
 
-        # ① 订单号：只认用户**原话**里的数字（评审 m8 改判：消解从历史推断出的
-        # 单号是模型猜的，不算用户给了单号——原话没号就弹选择器让用户自己选）。
-        # 白名单双保险：正则候选须在已知订单集内，「1999 元那单」不喂假数据。
+        # ① 订单号来源（用户拍板规则「问句直通、动作要确认」）：
+        #   a) 用户原话里的数字（正则）——点名了就直接办
+        #   b) 消解器槽位 ctx_order_no——仅当它是「追问刚才讨论的那个订单」时
+        #      才会非空；发起动作未点名时消解器留空 → 走到这里没号 → 弹选择器
+        # 两路都过白名单：历史没出现/编造的号（「1999 元那单」）一律无效。
         known = _known_order_nos()
         order_no = ""
         raw_text = state.get("raw_query") or query
         m = ORDER_NO_RE.search(raw_text)
         if m and m.group(1) in known:
             order_no = m.group(1)
+        if not order_no:
+            ctx = str(state.get("ctx_order_no") or "").strip()
+            if ctx in known and ctx:
+                order_no = ctx
         if not order_no:
             choice = interrupt(
                 {"type": "order_selector", "orders": orders_summary(), "question": query}

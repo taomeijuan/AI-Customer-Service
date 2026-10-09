@@ -23,8 +23,10 @@ class _StubClassifier:
 
 
 class _StubResolver:
-    async def resolve(self, query, history):
-        return query  # 透传
+    async def resolve_detail(self, query, history):
+        from app.workflow.resolver import ResolveOutcome
+
+        return ResolveOutcome(query=query, order_no="")  # 透传无槽位
 
 
 class _StubRetriever:
@@ -184,8 +186,11 @@ async def test_resolved_query_number_does_not_bypass_selector():
     → 必须仍弹选择器。直通的唯一合法来源是原话自带单号。"""
 
     class _InjectingResolver:
-        async def resolve(self, query, history):
-            return "订单1001怎么申请退款"  # 模拟消解从历史补出的号（原话没有）
+        async def resolve_detail(self, query, history):
+            from app.workflow.resolver import ResolveOutcome
+
+            # 动作句「我要退款」按规则槽位留空，即便改写句里带推断号
+            return ResolveOutcome(query="订单1001怎么申请退款", order_no="")
 
     agent = _FakeAgent()
     wf2 = build_workflow(
@@ -203,3 +208,54 @@ async def test_resolved_query_number_does_not_bypass_selector():
     )
     assert "__interrupt__" in out, "消解推断出的单号不应视为用户给了单号"
     assert agent.calls == []
+
+
+async def test_question_after_order_context_flows_through_slot():
+    """用户拍板规则：追问刚才讨论的订单（问句）→ 消解槽位给号 → 直通不弹卡片。"""
+    from app.workflow.resolver import ResolveOutcome
+
+    class _ContextResolver:
+        async def resolve_detail(self, query, history):
+            return ResolveOutcome(query="订单1001可以退货吗", order_no="1001")
+
+    agent = _FakeAgent()
+    wf = build_workflow(
+        retriever=_StubRetriever(),
+        agent_node=agent,
+        intent_classifier=_StubClassifier("退款退货"),
+        session_factory=None,
+        resolver=_ContextResolver(),
+        refund_prep=build_refund_prep(retriever=_StubRetriever(), expander=_StubExpander()),
+        checkpointer=InMemorySaver(),
+    )
+    out = await wf.ainvoke(
+        {"query": "可以退货吗", "messages": []},
+        config={"configurable": {"thread_id": "t-slot"}, "recursion_limit": 12},
+    )
+    assert "__interrupt__" not in out  # 槽位直通
+    assert out["final_text"] == "这一单可以退"
+    assert out["order_no"] == "1001"
+
+
+async def test_slot_must_pass_whitelist():
+    """槽位号也过白名单：消解器编个没出现过的号照样不认，回到选择器。"""
+    from app.workflow.resolver import ResolveOutcome
+
+    class _BogusResolver:
+        async def resolve_detail(self, query, history):
+            return ResolveOutcome(query=query, order_no="8888")
+
+    wf = build_workflow(
+        retriever=_StubRetriever(),
+        agent_node=_FakeAgent(),
+        intent_classifier=_StubClassifier("退款退货"),
+        session_factory=None,
+        resolver=_BogusResolver(),
+        refund_prep=build_refund_prep(retriever=_StubRetriever(), expander=_StubExpander()),
+        checkpointer=InMemorySaver(),
+    )
+    out = await wf.ainvoke(
+        {"query": "可以退吗", "messages": []},
+        config={"configurable": {"thread_id": "t-bogus"}, "recursion_limit": 12},
+    )
+    assert "__interrupt__" in out

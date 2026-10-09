@@ -76,9 +76,11 @@ async def test_resolve_strips_stale_citations_from_history_only():
 async def test_graph_resolve_node_uses_resolver_and_keeps_raw_query():
     """图接线：resolve 输出改写后 query，同时保留 raw_query 供落库。"""
 
+    from app.workflow.resolver import ResolveOutcome
+
     class _R:
-        async def resolve(self, query, history):
-            return "订单 1001 能退货吗"
+        async def resolve_detail(self, query, history):
+            return ResolveOutcome(query="订单 1001 能退货吗", order_no="1001")
 
     class _StubClassifier:
         async def classify(self, q):
@@ -114,3 +116,4 @@ async def test_graph_resolve_node_uses_resolver_and_keeps_raw_query():
                     seen.update(upd)
     assert seen["query"] == "订单 1001 能退货吗"
     assert seen["raw_query"] == "它能退吗"
+    assert seen["ctx_order_no"] == "1001"  # 槽位随 state 流动

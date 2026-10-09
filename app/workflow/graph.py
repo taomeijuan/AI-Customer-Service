@@ -46,6 +46,7 @@ class WorkflowState(TypedDict, total=False):
     raw_query: str  # 用户原话（resolve 改写前的真源，落库用）
     order_no: str  # ch06 退款子流程选定的订单号
     order_brief: dict  # ch06 退款子流程订单摘要（options 帧随发到前端）
+    ctx_order_no: str  # ch06 消解器判定的订单槽位（问句直通；动作留空弹选择器）
 
 
 def _make_router(has_refund_prep: bool):
@@ -98,16 +99,16 @@ def build_workflow(
     """组装工作流图。agent_node 由 build_agent_node 产出（create_react_agent 子图包装）。"""
 
     async def resolve(state: WorkflowState) -> dict:
-        """ch06 正式版：LLM 指代消解+改写；未注入 resolver 或消解失败均透传。"""
+        """ch06 正式版：LLM 指代消解+改写+订单槽位；未注入/失败均透传。"""
         raw = state["query"]
         if resolver is None:
-            return {"raw_query": raw}
+            return {"raw_query": raw, "ctx_order_no": ""}
         try:
-            resolved = await resolver.resolve(raw, state.get("messages") or [])
+            outcome = await resolver.resolve_detail(raw, state.get("messages") or [])
         except Exception as e:  # 双保险：Resolver 内部已兜底，图内再兜一层
             logger.warning("resolve node failed, pass-through: %s", e)
-            resolved = raw
-        return {"query": resolved, "raw_query": raw}
+            return {"query": raw, "raw_query": raw, "ctx_order_no": ""}
+        return {"query": outcome.query, "raw_query": raw, "ctx_order_no": outcome.order_no}
 
     async def intent(state: WorkflowState) -> dict:
         # ch06：classify_detail 拿置信度；分类器自带兜底，这里再兜一层防接口异常
