@@ -7,6 +7,7 @@
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from langchain.messages import AIMessage, HumanMessage
@@ -69,3 +70,32 @@ async def test_expansion_samples(sample):
     for q in queries:
         assert q.strip(), f"扩写含空项：{queries}"
         assert not q.startswith(("它", "这个", "那个")), f"扩写残留裸指代：{q!r}"
+
+
+from app.memory.summarizer import Summarizer
+
+
+def _summary_samples():
+    p = Path(__file__).parent / "data" / "summary_eval.jsonl"
+    return [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
+
+
+@pytest.mark.parametrize("sample", _summary_samples(), ids=lambda x: x["id"])
+async def test_summary_samples(sample):
+    """摘要 prompt 标注样例：事实/号码/诉求保留、寒暄丢弃、不编造、长度封顶。"""
+    from langchain.messages import AIMessage, HumanMessage
+    from app.core.llm import get_chat_model
+
+    class _ModelAdapter:
+        async def ainvoke(self, msgs):
+            r = await get_chat_model().ainvoke(msgs)
+            return r
+
+    s = Summarizer(_ModelAdapter(), None, SimpleNamespace(summary_inject_reserve=500))
+    batch = [(i + 1, HumanMessage(l.split(": ", 1)[1]) if l.startswith("用户") else AIMessage(l.split(": ", 1)[1])) for i, l in enumerate(sample["lines"])]
+    content = await s._summarize(batch, None)
+    for kw in sample["must_contain"]:
+        assert kw in content, f"{sample['id']}: 关键事实 {kw!r} 丢了 → {content!r}"
+    for kw in sample["must_not_contain"]:
+        assert kw not in content, f"{sample['id']}: 寒暄残留 {kw!r} → {content!r}"
+    assert len(content) <= sample["max_chars"]
