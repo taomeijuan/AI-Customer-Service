@@ -399,7 +399,7 @@ async def test_order_selector_interrupt_and_resume(session_factory, db_session):
         # 第一段：无单号 → order_selector 帧 + done（本轮无正文）
         r1 = await c.post(
             "/api/chat/stream",
-            json={"user_id": "u1", "message": "这个能退吗", "conversation_id": None},
+            json={"user_id": "u1", "message": "我要退款", "conversation_id": None},
         )
         ev1 = sse_events(r1.text)
         kinds1 = [e for e, _ in ev1]

@@ -172,6 +172,7 @@ async def chat_stream(
             "final_text": "",
             "refusal": False,
             "intent": "",
+            "action": False,
             "order_no": "",
             "order_brief": None,
             "order_text": "",

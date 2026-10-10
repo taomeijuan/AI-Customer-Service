@@ -36,7 +36,7 @@ INTENT_PROMPT = (
     '- 「我要投诉你们客服！」→ 投诉\n'
     '- 「在吗？」→ 闲聊\n'
     '- 「帮我看看那个单子」→ 其他（看不出具体要办什么）\n'
-    '- 「发票怎么开」→ 售后\n\n'
+    '- 「发票怎么开」→ 售后\n'
     '只输出 JSON：{"intent": "<类别名>", "confidence": <0到1的小数>}\n'
     "不要解释。"
 )
@@ -51,6 +51,7 @@ class IntentSchema(BaseModel):
 class ClassifyOutcome:
     intent: IntentName
     confidence: float
+    action: bool = False  # ch07.1：发起办理标志，由图内代码规则判定，模型不参与
 
 
 class IntentClassifier:

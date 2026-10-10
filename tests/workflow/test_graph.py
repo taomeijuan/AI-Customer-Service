@@ -180,3 +180,67 @@ async def test_intent_low_conf_records_to_pool(session_factory, db_session):
     await graph.ainvoke({"query": "帮我看看那个单子", "messages": [], "conversation_id": cid})
     rows = await LowConfidenceRepo(db_session).list_by_source("intent_low_conf")
     assert any(r.raw_question == "帮我看看那个单子" for r in rows)
+
+
+def test_wants_refund_process_table():
+    """ch07.1 办理/问规则代码规则（用户拍板不让模型猜）。"""
+    from app.workflow.graph import wants_refund_process
+
+    assert wants_refund_process("我要退款")
+    assert wants_refund_process("帮我退掉")
+    assert wants_refund_process("订单1001申请退货")
+    assert not wants_refund_process("退货政策是什么")
+    assert not wants_refund_process("七天无理由的条件是什么")
+    assert not wants_refund_process("退款要多久到账")
+    assert not wants_refund_process("这个能退吗")  # 无办理词无单号：按规则问句走知识
+
+
+@pytest.mark.usefixtures("db_session")
+async def test_policy_question_goes_knowledge_not_selector(session_factory, db_session):
+    """ch07.1 回归：「退货政策是什么」（intent=退款退货）走知识检索，不进选择器。"""
+    calls = {"refund": 0}
+
+    async def _spy_prep(state):
+        calls["refund"] += 1
+        return {"final_text": "x", "evidence": []}
+
+    retriever = FakeRetriever(RetrievalResult(evidences=[_ev(8)], low_confidence=False))
+    graph = _make(
+        session_factory,
+        retriever,
+        FakeClassifier(intent="退款退货"),
+        agent=FakeAgent(text="政策要点：七天无理由 [1]"),
+    )
+    # 注入 refund_prep 需要重建（_make 未带）
+    graph = build_workflow(
+        retriever=retriever,
+        agent_node=FakeAgent(text="政策要点：七天无理由 [1]"),
+        intent_classifier=FakeClassifier(intent="退款退货"),
+        session_factory=session_factory,
+        refund_prep=_spy_prep,
+    )
+    out = await graph.ainvoke({"query": "退货政策是什么", "messages": []})
+    assert calls["refund"] == 0  # 没进子流程
+    assert retriever.called_with == ["退货政策是什么"]  # 知识路径
+    assert "七天无理由" in out["final_text"]
+
+
+@pytest.mark.usefixtures("db_session")
+async def test_action_question_still_enters_refund_subflow(session_factory, db_session):
+    """对照：发起办理句仍进确定性子流程（ch06 验收4 语义不回归）。"""
+    entered = {"n": 0}
+
+    async def _prep(state):
+        entered["n"] += 1
+        return {"final_text": "走子流程了", "evidence": [], "refusal": False}
+
+    graph = build_workflow(
+        retriever=FakeRetriever(RetrievalResult(evidences=[], low_confidence=False)),
+        agent_node=FakeAgent(),
+        intent_classifier=FakeClassifier(intent="退款退货"),
+        session_factory=session_factory,
+        refund_prep=_prep,
+    )
+    out = await graph.ainvoke({"query": "我要退款", "messages": []})
+    assert entered["n"] == 1
+    assert out["final_text"] == "走子流程了"

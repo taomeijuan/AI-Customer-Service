@@ -108,7 +108,7 @@ async def test_refund_with_order_no_goes_straight_through():
 async def test_refund_without_order_no_interrupts_then_resumes():
     """「这个能退吗」无单号 → interrupt 弹选择器；resume 回填后从断点续跑到 Agent。"""
     wf, agent, _ = _make()
-    out1 = await wf.ainvoke({"query": "这个能退吗", "messages": []}, config=CFG)
+    out1 = await wf.ainvoke({"query": "我要退款", "messages": []}, config=CFG)
     # ainvoke 结果里中断以 __interrupt__ 浮出（与 astream 探针一致的信号形态）
     assert "__interrupt__" in out1
     intr = out1["__interrupt__"][0]
@@ -125,7 +125,7 @@ async def test_refund_without_order_no_interrupts_then_resumes():
 async def test_refund_cancel_selection_goes_to_log():
     """resume 不带单号（用户取消）→ 子流程结束语直达 log，不进 Agent。"""
     wf, agent, _ = _make()
-    await wf.ainvoke({"query": "这个能退吗", "messages": []}, config=CFG)
+    await wf.ainvoke({"query": "我要退款", "messages": []}, config=CFG)
     out = await wf.ainvoke(Command(resume={"order_no": ""}), config=CFG)
     assert "先不继续" in out["final_text"]
     assert agent.calls == []
@@ -153,14 +153,14 @@ async def test_refund_weak_evidence_falls_back():
 async def test_refund_regex_candidate_must_pass_whitelist():
     """评审 M3：数字在白名单外（年份/金额）不得当订单号——照走选择器。"""
     wf, agent, _ = _make()
-    out = await wf.ainvoke({"query": "1999 元那单能退吗", "messages": []}, config=CFG)
+    out = await wf.ainvoke({"query": "我要退1999元那单", "messages": []}, config=CFG)
     assert "__interrupt__" in out  # 1999 不在 1001-1005 → 提不到有效号 → 弹选择器
 
 
 async def test_resume_illegal_order_no_treated_as_cancel():
     """评审 M3：resume 回传白名单外的单号按取消处理，绝不喂假数据生成器。"""
     wf, agent, _ = _make()
-    await wf.ainvoke({"query": "这个能退吗", "messages": []}, config=CFG)
+    await wf.ainvoke({"query": "我要退款", "messages": []}, config=CFG)
     out = await wf.ainvoke(Command(resume={"order_no": "888888"}), config=CFG)
     assert "先不继续" in out["final_text"]
     assert agent.calls == []
@@ -169,7 +169,7 @@ async def test_resume_illegal_order_no_treated_as_cancel():
 async def test_resume_order_brief_reaches_options_channel():
     """options 帧载荷：order_brief 通道随 refund_prep 更新浮出（前端表单数据源）。"""
     wf, _, _ = _make()
-    await wf.ainvoke({"query": "这个能退吗", "messages": []}, config=CFG)
+    await wf.ainvoke({"query": "我要退款", "messages": []}, config=CFG)
     async for chunk in wf.astream(
         Command(resume={"order_no": "1001"}), config=CFG, stream_mode="updates"
     ):

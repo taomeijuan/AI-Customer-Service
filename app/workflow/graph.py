@@ -8,6 +8,7 @@
 """
 
 import logging
+import re
 from typing import Any, Literal, TypedDict
 
 from langgraph.checkpoint.memory import InMemorySaver
@@ -22,6 +23,16 @@ from app.workflow.intent import INTENT_LOW_CONF_THRESHOLD
 logger = logging.getLogger(__name__)
 
 FALLBACK_INTENT = "订单"  # 意图识别失败兜底=业务数据类（直进 Agent 最通用）
+
+# ch07.1（用户拍板：代码硬规则进意图节点，不让模型猜）：退款退货/售后类里，
+# 只有「发起办理」句才进订单子流程；问通用规则（「退货政策是什么」）走知识检索。
+# 办理词表命中或点名真实订单号 → 办理；否则视为规则咨询。
+PROCESS_HINT_RE = re.compile("(我要|帮我|给我|我想|申请|办理|退掉|退了吧|赶紧|立刻|马上)")
+ORDER_MENTION_RE = re.compile(r"(?<!\d)100[1-5](?!\d)")
+
+
+def wants_refund_process(raw_query: str) -> bool:
+    return bool(PROCESS_HINT_RE.search(raw_query or "")) or bool(ORDER_MENTION_RE.search(raw_query or ""))
 
 COMFORT_TEXT = (
     "非常抱歉给您带来了不好的体验，您的反馈我已经详细记录。"
@@ -44,6 +55,7 @@ class WorkflowState(TypedDict, total=False):
     final_text: str  # 最终回复文本（各路径产出）
     turn: int
     raw_query: str  # 用户原话（resolve 改写前的真源，落库用）
+    action: bool  # ch07.1 意图附带的「发起办理」标志（退款退货/售后路由子流程与否）
     order_no: str  # ch06 退款子流程选定的订单号
     order_brief: dict  # ch06 退款子流程订单摘要（options 帧随发到前端）
     order_text: str  # ch07 退款子流程订单可读文本（进 material 注入）
@@ -64,7 +76,11 @@ def _make_router(has_refund_prep: bool):
         if intent in ("商品咨询",):
             return "retrieve"  # 知识类：强制先检索
         if intent in ("退款退货", "售后"):
-            return "refund_prep" if has_refund_prep else "retrieve"  # ch06 退款子流程
+            # ch07.1 修复「退货政策是什么」被选择器拦截：只有发起办理才进子流程，
+            # 问通用规则仍走知识检索（用户心智：规则问题要答案，不是选订单）
+            if state.get("action") and has_refund_prep:
+                return "refund_prep"
+            return "retrieve"
         if intent in ("物流", "订单", "其他"):
             return "agent"  # 业务数据类直接进 Agent；其他=拿不准也交给 Agent 澄清
         if intent == "投诉":
@@ -125,7 +141,13 @@ def build_workflow(
         except Exception as e:
             logger.warning("intent classifier failed, fallback to 订单: %s", e)
             value, confidence = FALLBACK_INTENT, 0.0
-        logger.info("intent=%s confidence=%.2f query=%s", value, confidence, state["query"])
+        # ch07.1（用户拍板：不让模型猜）：办理标志由代码规则对**用户原话**判定；
+        # 消解器确认在追问具体订单（槽位非空）也算发起（ch06 问句直通语义）
+        action = value in ("退款退货", "售后") and (
+            wants_refund_process(state.get("raw_query") or state["query"])
+            or bool((state.get("ctx_order_no") or "").strip())
+        )
+        logger.info("intent=%s confidence=%.2f action=%s query=%s", value, confidence, action, state["query"])
         if confidence < INTENT_LOW_CONF_THRESHOLD and session_factory is not None and state.get("conversation_id"):
             # 数据飞轮入口：拿不准的问题进池，ch09 用用户反馈校准；入池失败不炸会话
             try:
@@ -138,7 +160,7 @@ def build_workflow(
                     )
             except Exception as e:
                 logger.warning("intent low-conf pool record failed: %s", e)
-        return {"intent": value}
+        return {"intent": value, "action": action}
 
     async def retrieve(state: WorkflowState) -> dict:
         result = await retriever.retrieve(state["query"], strategy="hybrid_rerank")
