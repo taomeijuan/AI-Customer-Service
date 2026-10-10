@@ -178,14 +178,14 @@
   <textarea id="input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
   <button id="send">发送</button>
 </footer>
-<div class="hint" id="diag">ch06 · 分流器正式版 · 前端 v2026-10-11c · 等待消息…</div>
+<div class="hint" id="diag">ch06 · 分流器正式版 · 前端 v2026-10-11d · 等待消息…</div>
 
 <script>
 console.log('🖥️ 前端版本 v2026-10-10b');
 const diag = document.getElementById('diag');
 const stats = { meta: 0, tool: [], delta: 0, citations: -1, errors: '' };
 function paintDiag() {
-  diag.textContent = `前端 v2026-10-11c · meta ${stats.meta} · tool ${stats.tool.length}${stats.tool.length ? '(' + stats.tool.join(',') + ')' : ''} · delta ${stats.delta} · citations ${stats.citations === -1 ? '—' : stats.citations}${stats.errors ? ' · ⚠️ ' + stats.errors : ''}`;
+  diag.textContent = `前端 v2026-10-11d · meta ${stats.meta} · tool ${stats.tool.length}${stats.tool.length ? '(' + stats.tool.join(',') + ')' : ''} · delta ${stats.delta} · citations ${stats.citations === -1 ? '—' : stats.citations}${stats.errors ? ' · ⚠️ ' + stats.errors : ''}`;
 }
 window.onerror = function(msg, src, line) { stats.errors = msg + ' @' + line; paintDiag(); console.error('💥 JS Error:', msg, 'line', line); };
 const chat = document.getElementById('chat');
@@ -653,6 +653,7 @@ document.getElementById('newChat').addEventListener('click', () => {
   loadSidebar();
 });
 loadSidebar();
+if (conversationId) switchConversation(conversationId);  // ch07 修复：打开页面即回载当前会话历史
 sendBtn.addEventListener('click', send);
 input.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
