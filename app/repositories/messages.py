@@ -21,6 +21,7 @@ class MessagesRepo:
         conversation_id: int,
         messages: list[BaseMessage],
         citations: list[dict] | None = None,
+        options: dict | None = None,
     ) -> None:
         """落普通消息（user / 纯文本 assistant）。带 tool_calls 的 AIMessage 必须走 append_tool_round。
 
@@ -38,10 +39,11 @@ class MessagesRepo:
                     content=m.text,
                 )
             )
-        if citations:
+        if citations or options:
             for r in reversed(rows):
                 if r.role == "assistant":
-                    r.citations = citations
+                    r.citations = citations or None
+                    r.options = options or None
                     break
         self._session.add_all(rows)
         await self._session.commit()

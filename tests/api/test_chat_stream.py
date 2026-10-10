@@ -9,6 +9,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy import select
+from sqlalchemy import text as sa_text
 
 from app.db.models import Conversation
 from app.repositories.messages import MessagesRepo
@@ -656,3 +657,18 @@ async def test_no_cross_turn_channel_residue(session_factory, db_session):
         r2 = await c.post("/api/chat/stream", json={"user_id": "u1", "message": "在吗", "conversation_id": cid})
         done2 = [v for e, v in sse_events(r2.text) if e == "done"][0]
         assert not done2.get("citations"), "上一轮 evidence 残留串进了闲聊轮"
+
+
+async def test_complaint_options_persisted_on_log(session_factory, db_session):
+    """ch07 回载即所见：投诉轮的 options 按钮经 log 节点随行落库。"""
+    app = create_app()
+    app.state.session_factory = session_factory
+    app.state.workflow = _make_workflow(session_factory, classifier_intent="投诉")
+    async with _client(app) as c:
+        r = await c.post("/api/chat/stream", json={"user_id": "u1", "message": "太气人了我要投诉", "conversation_id": None})
+    cid = sse_events(r.text)[0][1]["conversation_id"]
+    async with session_factory() as session:
+        rows = (await session.execute(sa_text(
+            "SELECT options FROM messages WHERE conversation_id=:c AND role='assistant' ORDER BY id DESC LIMIT 1"
+        ).bindparams(c=cid))).first()
+    assert rows and rows[0] and "转人工" in str(rows[0])

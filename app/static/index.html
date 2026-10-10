@@ -178,14 +178,14 @@
   <textarea id="input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
   <button id="send">发送</button>
 </footer>
-<div class="hint" id="diag">ch06 · 分流器正式版 · 前端 v2026-10-11b · 等待消息…</div>
+<div class="hint" id="diag">ch06 · 分流器正式版 · 前端 v2026-10-11c · 等待消息…</div>
 
 <script>
 console.log('🖥️ 前端版本 v2026-10-10b');
 const diag = document.getElementById('diag');
 const stats = { meta: 0, tool: [], delta: 0, citations: -1, errors: '' };
 function paintDiag() {
-  diag.textContent = `前端 v2026-10-11b · meta ${stats.meta} · tool ${stats.tool.length}${stats.tool.length ? '(' + stats.tool.join(',') + ')' : ''} · delta ${stats.delta} · citations ${stats.citations === -1 ? '—' : stats.citations}${stats.errors ? ' · ⚠️ ' + stats.errors : ''}`;
+  diag.textContent = `前端 v2026-10-11c · meta ${stats.meta} · tool ${stats.tool.length}${stats.tool.length ? '(' + stats.tool.join(',') + ')' : ''} · delta ${stats.delta} · citations ${stats.citations === -1 ? '—' : stats.citations}${stats.errors ? ' · ⚠️ ' + stats.errors : ''}`;
 }
 window.onerror = function(msg, src, line) { stats.errors = msg + ' @' + line; paintDiag(); console.error('💥 JS Error:', msg, 'line', line); };
 const chat = document.getElementById('chat');
@@ -616,6 +616,7 @@ async function switchConversation(cid) {
     if (!r.ok) throw new Error(String(r.status));
     const data = await r.json();
     if (activeConvId !== cid) return;  // 评审 m2：连点乱序返回，迟到的旧会话丢弃
+    let lastUser = '';
     for (const m of data.messages || []) {
       const bubble = addRow(m.role === 'user' ? 'user' : 'bot');
       const textEl = bubble.querySelector('.text');
@@ -628,6 +629,11 @@ async function switchConversation(cid) {
         // 无快照的历史（ch07 前的旧消息）：渲染 markdown，剥无主角标防死文本
         renderMd(textEl, (m.content || '').replace(/\[\d+\]/g, ''));
       }
+      if (m.options && m.options.options && m.options.options.length) {
+        // ch07 回载即所见：按钮组快照还原（转人工/建工单/申请退款）
+        addOptionsButtons(bubble, m.options.options, lastUser || '', m.options.order || null);
+      }
+      if (m.role === 'user') lastUser = m.content || '';
     }
   } catch (e) {
     if (activeConvId !== cid) return;

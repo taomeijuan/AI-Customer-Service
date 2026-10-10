@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from app.main import create_app
+from app.repositories.conversations import ConversationsRepo
 
 
 def _client(app):
@@ -59,3 +60,28 @@ async def test_other_user_or_missing_404(app_with_data):
         r1 = await c.get(f"/api/conversations/{cid1}/messages", params={"user_id": "someone-else"})
         r2 = await c.get("/api/conversations/99999999/messages", params={"user_id": "sidebar-u"})
     assert r1.status_code == 404 and r2.status_code == 404
+
+
+async def test_options_snapshot_roundtrip(session_factory, db_session):
+    """ch07 回载即所见：按钮组快照随消息行往返（log 落库 → API 带出）。"""
+    from langchain.messages import AIMessage, HumanMessage
+
+    from app.repositories.messages import MessagesRepo
+
+    async with session_factory() as session:
+        cid = await ConversationsRepo(session).ensure_conversation("opt-u", None)
+        await MessagesRepo(session).append(
+            cid,
+            [HumanMessage("我要退款"), AIMessage("这一单可以退 [1]")],
+            citations=[{"n": 1, "chunk_id": 21, "section_path": "售后政策", "question": "q", "answer": "a"}],
+            options={"options": ["申请退款"], "order": {"order_no": "1001", "product": "扫地机器人", "amount": 2749.83}},
+        )
+    app = create_app()
+    app.state.session_factory = session_factory
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.get(f"/api/conversations/{cid}/messages", params={"user_id": "opt-u"})
+    msgs = r.json()["messages"]
+    bot = msgs[-1]
+    assert bot["citations"][0]["chunk_id"] == 21
+    assert bot["options"]["options"] == ["申请退款"]
+    assert bot["options"]["order"]["order_no"] == "1001"

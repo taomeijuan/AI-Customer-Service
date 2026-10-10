@@ -218,10 +218,15 @@ def build_workflow(
 
                 from app.repositories.messages import MessagesRepo
 
+                opts = state.get("options") or []
                 await MessagesRepo(session).append(
                     state["conversation_id"],
                     [HumanMessage(state.get("raw_query") or state["query"]), AIMessage(text)],
                     citations=state.get("evidence") or None,
+                    options=(
+                        {"options": opts, "order": state.get("order_brief")}
+                        if opts else None
+                    ),  # ch07 回载即所见：按钮组随消息持久化
                 )
         return {}
 
