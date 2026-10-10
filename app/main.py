@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import logging
+import logging.handlers
 
 logging.basicConfig(
     level=logging.INFO,
@@ -14,9 +15,11 @@ logging.getLogger("httpx2").setLevel(logging.WARNING)
 # ch07 上下文可观测：同一条 INFO 流双写 stderr + log/app.log（model_ctx/history_ctx 可 grep）
 _LOG_DIR = Path(__file__).resolve().parents[1] / "log"
 _LOG_DIR.mkdir(exist_ok=True)
-logging.getLogger().addHandler(
-    logging.FileHandler(_LOG_DIR / "app.log", encoding="utf-8")
+_fh = logging.handlers.RotatingFileHandler(
+    _LOG_DIR / "app.log", encoding="utf-8", maxBytes=5 * 1024 * 1024, backupCount=3
 )
+_fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+logging.getLogger().addHandler(_fh)
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles

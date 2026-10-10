@@ -39,6 +39,9 @@ class Summarizer:
         self._sf = session_factory
         self._settings = settings
         self._inflight: set[int] = set()  # per-cid 单飞
+        # 评审 M1：事件循环对 Task 只持弱引用——必须自持强引用，否则任务可能
+        # 被 GC 中途回收，done_callback 不触发 → inflight 永不清除、该会话摘要停摆
+        self._tasks: set = set()
 
     def schedule(
         self, conversation_id: int, batch: list[tuple[int, BaseMessage]], projection: str | None
@@ -51,7 +54,13 @@ class Summarizer:
             return None
         self._inflight.add(conversation_id)
         task = asyncio.create_task(self._run(conversation_id, batch, projection))
-        task.add_done_callback(lambda _t: self._inflight.discard(conversation_id))
+        self._tasks.add(task)
+
+        def _done(_t: "asyncio.Task") -> None:
+            self._inflight.discard(conversation_id)
+            self._tasks.discard(_t)
+
+        task.add_done_callback(_done)
         return task
 
     async def _run(

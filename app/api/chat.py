@@ -154,6 +154,9 @@ async def chat_stream(
             )
 
         # ⑤ State wipe+resync：DB 全史 + 本轮输入（add_messages 并入 agent 回吐的新消息）
+        # ch07 评审 M2：会话级线程下未覆盖通道会跨轮残留（旧 evidence 滚雪球、
+        # 旧 final_text 骗退款闸直接走 log、旧 order_text 脏 material）——瞬时通道显式重置。
+        # resume 轮不走此处：续跑正依赖暂停轮的检查点通道原样保留。
         inputs = {
             "query": req.message,
             "messages": [
@@ -164,6 +167,17 @@ async def chat_stream(
             "ctx_history": ctx.history,
             "ctx_projection": projection,
             "conversation_id": conversation_id,
+            "evidence": [],
+            "options": [],
+            "final_text": "",
+            "refusal": False,
+            "intent": "",
+            "order_no": "",
+            "order_brief": None,
+            "order_text": "",
+            "order_instructions": "",
+            "raw_query": req.message,
+            "ctx_order_no": "",
         }
 
     deltas = 0

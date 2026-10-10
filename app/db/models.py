@@ -51,6 +51,7 @@ class Message(Base):
     content: Mapped[str | None] = mapped_column(Text, default=None)
     tool_calls: Mapped[list | None] = mapped_column(JSON, default=None)
     tool_call_id: Mapped[str | None] = mapped_column(String(64), default=None)
+    citations: Mapped[list | None] = mapped_column(JSON, default=None)  # ch07 回复的引用快照（侧栏回载还原可点击引用）
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 

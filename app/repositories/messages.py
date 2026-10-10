@@ -16,18 +16,34 @@ class MessagesRepo:
     def __init__(self, session) -> None:
         self._session = session
 
-    async def append(self, conversation_id: int, messages: list[BaseMessage]) -> None:
-        """落普通消息（user / 纯文本 assistant）。带 tool_calls 的 AIMessage 必须走 append_tool_round。"""
+    async def append(
+        self,
+        conversation_id: int,
+        messages: list[BaseMessage],
+        citations: list[dict] | None = None,
+    ) -> None:
+        """落普通消息（user / 纯文本 assistant）。带 tool_calls 的 AIMessage 必须走 append_tool_round。
+
+        citations（ch07）：本轮引用快照，挂在最后一条 assistant 行——侧栏回载
+        历史时还原 markdown 与可点击引用。
+        """
+        rows = []
         for m in messages:
             if isinstance(m, AIMessage) and m.tool_calls:
                 raise ValueError("带 tool_calls 的消息请走 append_tool_round，避免申请单丢失")
-            self._session.add(
+            rows.append(
                 Message(
                     conversation_id=conversation_id,
                     role=self._ROLE_MAP[m.type],
                     content=m.text,
                 )
             )
+        if citations:
+            for r in reversed(rows):
+                if r.role == "assistant":
+                    r.citations = citations
+                    break
+        self._session.add_all(rows)
         await self._session.commit()
 
     async def append_tool_round(

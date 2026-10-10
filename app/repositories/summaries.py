@@ -1,8 +1,9 @@
 """ch07 分段摘要仓储：一段一行只追加；投影按需从分段表重组（视图级，非数据级）。"""
 
 from sqlalchemy import func, select
+from sqlalchemy import text as sa_text
 
-from app.db.models import Conversation, ConversationSummary
+from app.db.models import ConversationSummary
 from app.memory.tokens import estimate_tokens
 
 
@@ -49,9 +50,14 @@ class SummariesRepo:
                 content=content,
             )
         )
-        conv = await self._session.get(Conversation, conversation_id)
-        conv.summary_upto_msg_id = upto_msg_id
-        conv.summary = await self.build_projection(conversation_id, keep_budget=projection_budget)
+        projection = await self.build_projection(conversation_id, keep_budget=projection_budget)
+        # 评审 m4：Core text UPDATE 绕开 ORM onupdate，摘要完成不翻转侧栏 updated_at 排序
+        await self._session.execute(
+            sa_text(
+                "UPDATE conversations SET summary_upto_msg_id=:u, summary=:p WHERE id=:cid"
+            ),
+            {"u": upto_msg_id, "p": projection, "cid": conversation_id},
+        )
         await self._session.commit()
         return seq
 

@@ -15,7 +15,7 @@ from langgraph.config import get_stream_writer
 from langgraph.types import interrupt
 
 from app.tools.ecommerce import order_data, orders_summary
-from app.workflow.agent_node import _tool_answer_to_text
+from app.workflow.text import tool_answer_to_text as _tool_answer_to_text
 
 logger = logging.getLogger(__name__)
 

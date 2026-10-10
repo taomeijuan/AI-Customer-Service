@@ -80,5 +80,5 @@ async def get_visible_messages(session, conversation_id: int, user_id: str) -> l
     for r in rows:
         if r.role == "tool" or (r.role == "assistant" and r.tool_calls and not r.content):
             continue
-        out.append({"role": r.role, "content": r.content or ""})
+        out.append({"role": r.role, "content": r.content or "", "citations": r.citations or None})
     return out

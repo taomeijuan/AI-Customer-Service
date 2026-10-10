@@ -31,7 +31,7 @@ def compute_budget(settings: Any) -> BudgetSpec:
     avail = settings.model_context_window - settings.max_output_tokens - peak - fixed
     desired = settings.keep_turns * settings.turn_steady_tokens
     history = max(0, min(avail, desired))
-    layer1 = int(history * 0.7)
+    layer1 = history * 7 // 10
     return BudgetSpec(
         peak=peak,
         fixed=fixed,

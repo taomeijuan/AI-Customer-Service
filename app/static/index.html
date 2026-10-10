@@ -178,14 +178,14 @@
   <textarea id="input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
   <button id="send">发送</button>
 </footer>
-<div class="hint" id="diag">ch06 · 分流器正式版 · 前端 v2026-10-11a · 等待消息…</div>
+<div class="hint" id="diag">ch06 · 分流器正式版 · 前端 v2026-10-11b · 等待消息…</div>
 
 <script>
 console.log('🖥️ 前端版本 v2026-10-10b');
 const diag = document.getElementById('diag');
 const stats = { meta: 0, tool: [], delta: 0, citations: -1, errors: '' };
 function paintDiag() {
-  diag.textContent = `前端 v2026-10-11a · meta ${stats.meta} · tool ${stats.tool.length}${stats.tool.length ? '(' + stats.tool.join(',') + ')' : ''} · delta ${stats.delta} · citations ${stats.citations === -1 ? '—' : stats.citations}${stats.errors ? ' · ⚠️ ' + stats.errors : ''}`;
+  diag.textContent = `前端 v2026-10-11b · meta ${stats.meta} · tool ${stats.tool.length}${stats.tool.length ? '(' + stats.tool.join(',') + ')' : ''} · delta ${stats.delta} · citations ${stats.citations === -1 ? '—' : stats.citations}${stats.errors ? ' · ⚠️ ' + stats.errors : ''}`;
 }
 window.onerror = function(msg, src, line) { stats.errors = msg + ' @' + line; paintDiag(); console.error('💥 JS Error:', msg, 'line', line); };
 const chat = document.getElementById('chat');
@@ -615,12 +615,22 @@ async function switchConversation(cid) {
     const r = await fetch(`/api/conversations/${cid}/messages?user_id=${encodeURIComponent(userId)}`);
     if (!r.ok) throw new Error(String(r.status));
     const data = await r.json();
+    if (activeConvId !== cid) return;  // 评审 m2：连点乱序返回，迟到的旧会话丢弃
     for (const m of data.messages || []) {
       const bubble = addRow(m.role === 'user' ? 'user' : 'bot');
-      // 回载历史里的旧角标是上一轮编号，无本轮 citations 对应——剥掉防死文本
-      bubble.querySelector('.text').textContent = (m.content || '').replace(/\[\d+\]/g, '');
+      const textEl = bubble.querySelector('.text');
+      if (m.role === 'user') {
+        textEl.textContent = m.content || '';
+      } else if (m.citations && m.citations.length) {
+        // ch07：引用快照随行落库——回载还原 markdown 与可点击引用
+        renderAnswer(textEl, m.content || '', m.citations);
+      } else {
+        // 无快照的历史（ch07 前的旧消息）：渲染 markdown，剥无主角标防死文本
+        renderMd(textEl, (m.content || '').replace(/\[\d+\]/g, ''));
+      }
     }
   } catch (e) {
+    if (activeConvId !== cid) return;
     console.warn('历史回载失败:', e);
     chat.innerHTML = '<div class="row bot"><div class="avatar">🛍️</div><div class="bubble">这个会话的历史加载失败了，直接说新问题也能继续。</div></div>';
   }

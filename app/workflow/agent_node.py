@@ -13,7 +13,11 @@ from langgraph.config import get_stream_writer
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.prebuilt import create_react_agent
 
-from app.workflow.text import CITE_RE as _CITE_RE, strip_stale_citations as _strip_stale_citations
+from app.workflow.text import (
+    CITE_RE as _CITE_RE,
+    strip_stale_citations as _strip_stale_citations,
+    tool_answer_to_text as _tool_answer_to_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,47 +31,6 @@ BUSINESS_TURN_PROMPT = (
 )
 
 
-def _tool_answer_to_text(name: str, raw: str) -> str:
-    """工具结果（JSON 串）→ 引用卡片的可读中文文本。
-
-    未格式化的工具引用在卡片上是一坨 {'status': ...} JSON——用户不可读。
-    已知工具走字段模板，未知工具按 key：value 分行降级。
-    """
-    try:
-        data = json.loads(raw)
-    except Exception:
-        return raw[:500].replace("{", "（").replace("}", "）") if raw[:1] == "{" else raw[:500]
-    if not isinstance(data, dict):
-        return str(data)[:500]
-
-    if name == "query_order":
-        return (
-            f"订单 {data.get('order_no', '')}：状态「{data.get('status', '')}」，"
-            f"商品 {data.get('product', '')}，金额 {data.get('amount', '')} 元，"
-            f"下单时间 {data.get('created_at', '')}"
-        )
-    if name == "query_logistics":
-        traces = data.get("traces") or []
-        lines = "；".join(
-            f"{t.get('time', '')} {t.get('desc', '')}"
-            for t in traces
-            if isinstance(t, dict)
-        )
-        return (
-            f"订单 {data.get('order_no', '')}：承运 {data.get('carrier', '')}，"
-            f"运单号 {data.get('tracking_no', '')}。轨迹：{lines}"
-        )
-    if name == "query_product":
-        return (
-            f"{data.get('product', '')}：价格 {data.get('price', '')} 元，"
-            f"库存 {data.get('stock', '')}，促销：{data.get('promo', '')}"
-        )
-    parts = []
-    for k, v in data.items():
-        if isinstance(v, (list, dict)):
-            v = json.dumps(v, ensure_ascii=False)
-        parts.append(f"{k}：{v}")
-    return "；".join(parts)[:500]
 
 
 class _ToolFrameHandler(AsyncCallbackHandler):

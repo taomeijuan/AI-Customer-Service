@@ -5,7 +5,8 @@ cd "$(dirname "$0")/.."
 
 for db in ecom_cs ecom_cs_test; do
   echo "→ $db"
-  docker exec -i ecom-cs-mysql mysql -uroot -proot123 --default-character-set=utf8mb4 "$db" < db/init/07-ch07.sql
-  docker exec -i ecom-cs-mysql mysql -uroot -proot123 --default-character-set=utf8mb4 "$db" < db/init/07-ch07-layers.sql
+  docker exec -i ecom-cs-mysql mysql --force -uroot -proot123 --default-character-set=utf8mb4 "$db" < db/init/07-ch07.sql
+  docker exec -i ecom-cs-mysql mysql --force -uroot -proot123 --default-character-set=utf8mb4 "$db" < db/init/07-ch07-layers.sql
+  docker exec -i ecom-cs-mysql mysql --force -uroot -proot123 --default-character-set=utf8mb4 "$db" < db/init/08-ch07-citations.sql
 done
-echo "✓ ch07 conversations 三列 + conversation_summaries 就绪"
+echo "✓ ch07 上下文表结构与 messages.citations 就绪"

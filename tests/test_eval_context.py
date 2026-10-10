@@ -69,7 +69,7 @@ class _StubRetriever:
 async def test_demo_config_cascade_and_summary_answer(session_factory, db_session, caplog):
     settings = Settings(_env_file=".env", **DEMO)
     budget = compute_budget(settings)
-    assert (budget.history, budget.layer1, budget.layer2) == (5650, 3954, 1696)
+    assert (budget.history, budget.layer1, budget.layer2) == (5650, 3955, 1695)
 
     model = get_chat_model()
     app = create_app()

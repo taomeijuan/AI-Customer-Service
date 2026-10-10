@@ -199,6 +199,7 @@ def build_workflow(
                 await MessagesRepo(session).append(
                     state["conversation_id"],
                     [HumanMessage(state.get("raw_query") or state["query"]), AIMessage(text)],
+                    citations=state.get("evidence") or None,
                 )
         return {}
 

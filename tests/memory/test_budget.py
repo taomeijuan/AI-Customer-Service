@@ -26,14 +26,15 @@ def test_default_window_cascade_numbers():
 
 
 def test_demo_config_matches_acceptance_numbers():
-    """验收 2 演示配置：history=5650、层1=3954（int 浮点地板，与验收原值一致）、
-    层2=history−层1=1696（自洽约束；验收给的 1695 与 3954 相加差 1，取残差规则）。"""
+    """验收 2 演示配置：history=5650、层1=history×7//10=3955、层2=1695（残差）。
+    整数口径与设计文档 §5 对账表一致；验收文本 3954+1695=5649 不自洽，取整规则
+    经计划评审确认（层2 与验收原值吻合）。"""
     b = compute_budget(_s(
         model_context_window=18000, max_agent_steps=3, rerank_top_k=5,
     ))
     assert b.peak == 5600 and b.fixed == 4750
     assert b.history == 5650  # 窗口侧成为瓶颈
-    assert b.layer1 == 3954 and b.layer2 == 1696
+    assert b.layer1 == 3955 and b.layer2 == 1695
     assert b.layer1 + b.layer2 == 5650  # 两层严格自洽
     assert b.ok is True
 
