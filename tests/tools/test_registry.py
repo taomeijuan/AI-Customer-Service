@@ -2,10 +2,12 @@
 
 import inspect
 
+from app.core.config import Settings
 from app.tools.ecommerce import query_order
+from app.tools.engine import execute
 from app.tools.mock_data import logistics, order_data
 from app.tools.registry import ToolRegistry, scan_plugins
-from app.tools.spec import ToolSpec
+from app.tools.spec import ToolContext, ToolSpec
 
 _ORDER_SCHEMA = {
     "type": "object",
@@ -86,4 +88,39 @@ async def test_logistics_stable_and_order_seed_matches_legacy_tool():
 
     registry = ToolRegistry()
     scan_plugins(registry)
-    assert await _call(registry.get("query_order").handler, "1001") == legacy
+    ctx = ToolContext(conversation_id=None, tool_call_id=None, confirmed=False)
+    assert await _call(registry.get("query_order").handler, {"order_no": "1001"}, ctx) == legacy
+
+
+def _settings() -> Settings:
+    return Settings(_env_file=None, tool_timeout=3.0, tool_retries=1, tool_delay_tools="", tool_delay_seconds=0)
+
+
+async def test_scanned_order_and_product_execute_with_engine(db_session, session_factory):
+    """引擎按 handler(args, ctx) 调用。直接登记 order_data(order_no) 会 TypeError。"""
+    registry = ToolRegistry()
+    scan_plugins(registry)
+    ctx = ToolContext(conversation_id=1, tool_call_id="call-1", confirmed=False)
+
+    order = registry.get("query_order")
+    assert order.permission == "read"
+    result = await execute(
+        order,
+        {"order_no": "1001"},
+        ctx,
+        session_factory=session_factory,
+        settings=_settings(),
+    )
+    assert result["ok"] is True
+    assert result["data"]["order_no"] == "1001"
+
+    product = registry.get("query_product")
+    product_result = await execute(
+        product,
+        {"product_name": "空气炸锅"},
+        ctx,
+        session_factory=session_factory,
+        settings=_settings(),
+    )
+    assert product_result["ok"] is True
+    assert product_result["data"]["product"] == "空气炸锅"
