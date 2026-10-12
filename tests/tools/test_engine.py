@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 
 from sqlalchemy import select
 
@@ -322,6 +323,28 @@ async def test_delay_inside_attempt_can_time_out(db_session, session_factory):
 
     assert calls["n"] == 0
     assert result["error"] == "工具执行超时"
+    rows = await _audit_rows(session_factory)
+    assert rows[0]["status"] == "超时"
+    assert rows[0]["retry_count"] == 0
+
+
+async def test_sync_handler_timeout_does_not_block_loop(db_session, session_factory):
+    def handler(args, ctx):
+        time.sleep(0.3)
+        return {"order_no": "1001"}
+
+    started = time.perf_counter()
+    result = await execute(
+        _spec(handler, permission="read"),
+        {"order_no": "1001"},
+        _ctx(),
+        session_factory=session_factory,
+        settings=_settings(tool_timeout=0.05, tool_retries=0),
+    )
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.2
+    assert result == {"ok": False, "error_type": "fault", "error": "工具执行超时"}
     rows = await _audit_rows(session_factory)
     assert rows[0]["status"] == "超时"
     assert rows[0]["retry_count"] == 0

@@ -135,10 +135,10 @@ async def _attempt(spec: ToolSpec, args: dict, ctx: ToolContext, settings):
     delay = _delay_seconds(spec, settings)
     if delay > 0:
         await asyncio.sleep(delay)
-    result = spec.handler(args, ctx)
-    if inspect.isawaitable(result):
-        return await result
-    return result
+    handler = spec.handler
+    if inspect.iscoroutinefunction(handler):
+        return await handler(args, ctx)
+    return await asyncio.to_thread(handler, args, ctx)
 
 
 async def _run(spec: ToolSpec, args: dict, ctx: ToolContext, settings) -> _Outcome:
