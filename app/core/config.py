@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     mysql_database: str = "ecom_cs"
     tool_timeout: float = 3.0
     tool_retries: int = 1
+    tool_delay_tools: str = ""
+    tool_delay_seconds: float = 0
 
     ollama_embed_base_url: str = "http://localhost:11434/v1"
     embed_model: str = "bge-m3"
