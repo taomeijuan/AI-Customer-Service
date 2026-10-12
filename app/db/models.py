@@ -192,3 +192,24 @@ class FaithCase(Base):
     last_seen_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
     resolution: Mapped[str | None] = mapped_column(String(300), default=None)
     resolved_at: Mapped[datetime | None] = mapped_column(default=None)
+
+
+class ToolAuditLog(Base):
+    """工具调用审计留痕（ch08，用户 DDL 对齐：db/init/10-ch08.sql）。不挂外键。"""
+
+    __tablename__ = "tool_audit_logs"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    conversation_id: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    tool_call_id: Mapped[str | None] = mapped_column(String(64), default=None)
+    tool_name: Mapped[str] = mapped_column(String(128))
+    tool_source: Mapped[str] = mapped_column(Enum("builtin", "mcp", name="tool_source"))
+    mcp_server: Mapped[str | None] = mapped_column(String(64), default=None)
+    arguments: Mapped[dict | None] = mapped_column(JSON, default=None)
+    result_summary: Mapped[str | None] = mapped_column(Text, default=None)
+    status: Mapped[str] = mapped_column(
+        Enum("成功", "失败", "超时", "校验拦下", "权限拒绝", name="tool_audit_status")
+    )
+    error_message: Mapped[str | None] = mapped_column(String(512), default=None)
+    retry_count: Mapped[int] = mapped_column(default=0, server_default="0")
+    duration_ms: Mapped[int | None] = mapped_column(default=None)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
