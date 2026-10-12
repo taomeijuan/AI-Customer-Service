@@ -1,3 +1,5 @@
+import re
+
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
@@ -31,7 +33,13 @@ def _field_name(error: ValidationError) -> str:
         return missing[0] if missing else "参数"
     if error.validator == "additionalProperties":
         properties = error.schema.get("properties", {})
-        extras = [name for name in error.instance if name not in properties]
+        patterns = list(error.schema.get("patternProperties", {}))
+        extras = [
+            name
+            for name in error.instance
+            if name not in properties
+            and not any(re.search(pattern, name) for pattern in patterns)
+        ]
         return extras[0] if extras else "参数"
     if error.path:
         return str(error.path[-1])

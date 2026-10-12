@@ -56,6 +56,17 @@ def test_additional_property_names_field():
     assert msg == "参数不合法：不允许多余字段 extra"
 
 
+def test_additional_property_skips_pattern_properties():
+    schema = {
+        "type": "object",
+        "properties": {"a": {"type": "string"}},
+        "patternProperties": {"^x-": {}},
+        "additionalProperties": False,
+    }
+    msg = validate_args(schema, {"a": "ok", "x-foo": 1, "bad": 2})
+    assert msg == "参数不合法：不允许多余字段 bad"
+
+
 def test_validation_failure_does_not_raise():
     msg = validate_args(TICKET_SCHEMA, {})
     assert isinstance(msg, str)
