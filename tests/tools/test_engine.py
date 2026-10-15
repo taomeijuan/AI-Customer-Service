@@ -427,3 +427,27 @@ async def test_audit_failure_still_returns_payload(db_session, session_factory, 
     assert called["n"] == 1
     assert result == {"ok": True, "data": {"order_no": "1001"}}
     assert any(record.levelno >= logging.ERROR for record in caplog.records)
+
+
+async def test_none_spec_records_failed_audit_and_returns_fault(db_session, session_factory):
+    result = await execute(
+        None,
+        {"x": 1},
+        _ctx(),
+        session_factory=session_factory,
+        settings=_settings(),
+        tool_name="ghost_tool",
+    )
+    assert result == {
+        "ok": False,
+        "error_type": "fault",
+        "error": "工具未注册：ghost_tool",
+    }
+    rows = await _audit_rows(session_factory)
+    assert len(rows) == 1
+    assert rows[0]["tool_name"] == "ghost_tool"
+    assert rows[0]["tool_source"] == "builtin"
+    assert rows[0]["mcp_server"] is None
+    assert rows[0]["status"] == "失败"
+    assert rows[0]["error_message"] == "工具未注册：ghost_tool"
+

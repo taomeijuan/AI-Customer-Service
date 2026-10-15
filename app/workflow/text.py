@@ -22,6 +22,11 @@ def tool_answer_to_text(name: str, raw: str) -> str:
     if not isinstance(data, dict):
         return str(data)[:500]
 
+    if data.get("ok") is False:
+        return str(data.get("error") or "工具调用未成功")[:500]
+    if "ok" in data and isinstance(data.get("data"), dict):
+        data = data["data"]
+
     if name == "query_order":
         return (
             f"订单 {data.get('order_no', '')}：状态「{data.get('status', '')}」，"
@@ -53,6 +58,8 @@ def tool_answer_to_text(name: str, raw: str) -> str:
     if name == "query_return":
         body = data["data"] if isinstance(data.get("data"), dict) else data
         return f"订单 {body.get('order_no', '')}：退货进度「{body.get('return_status', '')}」"
+    if name == "create_ticket":
+        return f"工单 {data.get('ticket_no', '')}：{data.get('message', '已创建')}"
     parts = []
     for k, v in data.items():
         if isinstance(v, (list, dict)):

@@ -29,10 +29,18 @@ FALLBACK_INTENT = "订单"  # 意图识别失败兜底=业务数据类（直进 
 # 办理词表命中或点名真实订单号 → 办理；否则视为规则咨询。
 PROCESS_HINT_RE = re.compile("(我要|帮我|给我|我想|申请|办理|退掉|退了吧|赶紧|立刻|马上)")
 ORDER_MENTION_RE = re.compile(r"(?<!\d)100[1-5](?!\d)")
+TICKET_HINT_RE = re.compile(r"(工单|转人工|人工客服)")
+AFTERSALES_TOOL_RE = re.compile(
+    r"(在保|保修|质保|过保|保修期|退货.*(进度|到哪|状态|哪一步)|退款.*(进度|到哪|状态|哪一步))"
+)
 
 
 def wants_refund_process(raw_query: str) -> bool:
-    return bool(PROCESS_HINT_RE.search(raw_query or "")) or bool(ORDER_MENTION_RE.search(raw_query or ""))
+    text = raw_query or ""
+    if TICKET_HINT_RE.search(text) or AFTERSALES_TOOL_RE.search(text):
+        return False
+    return bool(PROCESS_HINT_RE.search(text)) or bool(ORDER_MENTION_RE.search(text))
+
 
 COMFORT_TEXT = (
     "非常抱歉给您带来了不好的体验，您的反馈我已经详细记录。"
@@ -40,6 +48,24 @@ COMFORT_TEXT = (
 )
 CHITCHAT_TEXT = "你好呀～我是商城小助手，商品、订单、物流、售后的问题都可以问我 😊"
 FALLBACK_TEXT = "这个问题我这边暂时没有足够的资料，帮您转人工确认"
+
+
+def _is_direct_agent_turn(state: "WorkflowState") -> bool:
+    """建工单/转人工、售后实时工具查询（保修/退货进度）、或上一轮 AI 刚追问工单详情 → 直进 Agent。"""
+    text = f"{state.get('raw_query') or ''} {state.get('query') or ''}"
+    if TICKET_HINT_RE.search(text) or AFTERSALES_TOOL_RE.search(text):
+        return True
+    history = state.get("ctx_history")
+    if history is None:
+        history = state.get("messages") or []
+    for msg in reversed(history):
+        role = getattr(msg, "type", None) or (msg.get("role") if isinstance(msg, dict) else None)
+        if role in ("ai", "assistant"):
+            content = getattr(msg, "content", None) if not isinstance(msg, dict) else msg.get("content")
+            if isinstance(content, str) and content != COMFORT_TEXT and "工单" in content:
+                return True
+            break
+    return False
 
 
 class WorkflowState(TypedDict, total=False):
@@ -76,6 +102,8 @@ def _make_router(has_refund_prep: bool):
         if intent in ("商品咨询",):
             return "retrieve"  # 知识类：强制先检索
         if intent in ("退款退货", "售后"):
+            if _is_direct_agent_turn(state):
+                return "agent"
             # ch07.1 修复「退货政策是什么」被选择器拦截：只有发起办理才进子流程，
             # 问通用规则仍走知识检索（用户心智：规则问题要答案，不是选订单）
             if state.get("action") and has_refund_prep:
@@ -84,6 +112,8 @@ def _make_router(has_refund_prep: bool):
         if intent in ("物流", "订单", "其他"):
             return "agent"  # 业务数据类直接进 Agent；其他=拿不准也交给 Agent 澄清
         if intent == "投诉":
+            if _is_direct_agent_turn(state):
+                return "agent"
             return "comfort"
         return "chitchat"  # 闲聊
 

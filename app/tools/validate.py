@@ -22,6 +22,8 @@ def _chinese_message(error: ValidationError) -> str:
         return f"参数不合法：{field} 不在允许的取值内"
     if error.validator == "minLength":
         return f"参数不合法：{field} 长度不足"
+    if error.validator == "maxLength":
+        return f"参数不合法：{field} 长度超限"
     if error.validator == "additionalProperties":
         return f"参数不合法：不允许多余字段 {field}"
     return f"参数不合法：{field} 不符合要求"

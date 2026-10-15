@@ -172,3 +172,75 @@ async def test_recursion_limit_guard(session_factory, db_session):
     out = await node({"query": "一直查", "messages": [], "conversation_id": 1, "turn": 1})
     assert "final_text" in out  # GraphRecursionError 被兜住
     assert llm.calls < 10  # 没有无限循环
+
+
+def test_tool_answer_to_text_unwraps_engine_envelope():
+    """M2 回归：引擎包装后的 {"ok": true, "data": {...}} 及错误结构都能转成可读中文引用。"""
+    import json
+    from app.workflow.text import tool_answer_to_text
+
+    order_raw = json.dumps(
+        {
+            "ok": True,
+            "data": {
+                "order_no": "1001",
+                "status": "已发货",
+                "product": "扫地机器人",
+                "amount": 2749.83,
+                "created_at": "2026-10-01",
+            },
+        },
+        ensure_ascii=False,
+    )
+    order_text = tool_answer_to_text("query_order", order_raw)
+    assert "订单 1001" in order_text
+    assert "已发货" in order_text
+    assert "扫地机器人" in order_text
+
+    logistics_raw = json.dumps(
+        {
+            "ok": True,
+            "data": {
+                "order_no": "1001",
+                "carrier": "顺丰速运",
+                "tracking_no": "SF123",
+                "traces": [{"time": "10:00", "desc": "已揽收"}],
+            },
+        },
+        ensure_ascii=False,
+    )
+    logistics_text = tool_answer_to_text("query_logistics", logistics_raw)
+    assert "订单 1001" in logistics_text
+    assert "顺丰速运" in logistics_text
+    assert "已揽收" in logistics_text
+
+    product_raw = json.dumps(
+        {
+            "ok": True,
+            "data": {
+                "product": "无线降噪耳机",
+                "price": 399,
+                "stock": "有货",
+                "promo": "满300减30",
+            },
+        },
+        ensure_ascii=False,
+    )
+    product_text = tool_answer_to_text("query_product", product_raw)
+    assert "无线降噪耳机" in product_text
+    assert "399" in product_text
+
+    ticket_raw = json.dumps(
+        {"ok": True, "data": {"ticket_no": "T202610150001", "message": "工单已创建"}},
+        ensure_ascii=False,
+    )
+    ticket_text = tool_answer_to_text("create_ticket", ticket_raw)
+    assert "工单 T202610150001" in ticket_text
+    assert "工单已创建" in ticket_text
+
+    err_raw = json.dumps(
+        {"ok": False, "error_type": "not_found", "error": "没有查到对应记录"},
+        ensure_ascii=False,
+    )
+    assert tool_answer_to_text("query_order", err_raw) == "没有查到对应记录"
+

@@ -28,7 +28,8 @@ logger = logging.getLogger(__name__)
 # 消息，优先级高于骨架 prompt。ch05 验收标准第 1 条：提订单号必须两步都查。
 BUSINESS_TURN_PROMPT = (
     "【本轮强制要求】本轮属于订单/物流/售后实时数据查询，必须调用工具获取最新数据后再作答："
-    "用户提到订单号时先调用 query_order 查订单状态、再调用 query_logistics 查物流轨迹，两步都做。"
+    "查询订单状态或物流时，用户提到订单号必须先调用 query_order 查订单状态、再调用 query_logistics 查物流轨迹，两步都做；"
+    "查询保修/质保/是否在保时调用 query_warranty；查询退货/退款处理进度时调用 query_return。"
     "即使对话历史里已有相似问题的答案，也必须重新调用工具核实，禁止直接抄历史答案或编造数据。"
 )
 
@@ -50,7 +51,10 @@ class _ToolFrameHandler(AsyncCallbackHandler):
     async def on_tool_start(self, serialized, input_str, **kwargs) -> None:
         name = serialized.get("name", "tool") if isinstance(serialized, dict) else "tool"
         args: dict = {}
-        if isinstance(input_str, str) and input_str:
+        raw_inputs = kwargs.get("inputs")
+        if isinstance(raw_inputs, dict):
+            args = {k: v for k, v in raw_inputs.items() if k != "tool_call_id"}
+        elif isinstance(input_str, str) and input_str:
             try:
                 parsed = json.loads(input_str)
                 if isinstance(parsed, dict):
@@ -62,9 +66,22 @@ class _ToolFrameHandler(AsyncCallbackHandler):
 
     async def on_tool_end(self, output, **kwargs) -> None:
         meta = self._stack.pop() if self._stack else {"name": "tool", "args": {}}
-        self._writer({"tool": {"tool": meta["name"], "args": meta["args"], "status": "done", "ok": True}})
+        content = getattr(output, "content", output)
+        ok = True
+        if isinstance(content, str) and content.startswith("{"):
+            try:
+                parsed = json.loads(content)
+                if isinstance(parsed, dict) and parsed.get("ok") is False:
+                    ok = False
+            except Exception:
+                pass
+        self._writer({"tool": {"tool": meta["name"], "args": meta["args"], "status": "done", "ok": ok}})
 
     async def on_tool_error(self, error, **kwargs) -> None:
+        if isinstance(error, GraphInterrupt):
+            if self._stack:
+                self._stack.pop()
+            return
         meta = self._stack.pop() if self._stack else {"name": "tool", "args": {}}
         self._writer({"tool": {"tool": meta["name"], "args": meta["args"], "status": "done", "ok": False}})
 
@@ -75,7 +92,9 @@ AGENT_SYSTEM_PROMPT = """你是"商城小助手"，一家电商平台的智能�
 行为约束：
 1. 语气礼貌、简洁、口语化，单次回复不超过 200 字。
 2. 需要实时数据时调用对应查询工具：
-   - 用户提到具体订单号（如 1001）→ 必须先调用 query_order 查订单状态，再调用 query_logistics 查物流轨迹（两步都做）。
+   - 用户提到具体订单号查询订单或物流（如 1001）→ 必须先调用 query_order 查订单状态，再调用 query_logistics 查物流轨迹（两步都做）。
+   - 查询保修/质保状态（是否在保、保修期）→ 调用 query_warranty。
+   - 查询退货/退款处理进度（退货到哪一步）→ 调用 query_return。
    - 只问商品信息 → 调用 query_product。
    - 工具返回的数据可以如实转述给用户。
    - 调用工具时只输出工具调用本身，不要附加任何说明文字（工具执行完再组织答案）。
@@ -141,6 +160,8 @@ def build_agent_node(
         # 恢复路径的第一件事：把父图 resume 值取回来。这一下不能包在 except Exception 里。
         saved = paused_agents.get(cid) if registry is not None else None
         decision = interrupt(saved["payload"]) if saved else None
+        if saved:
+            paused_agents.pop(cid, None)
 
         try:
             writer = get_stream_writer()
@@ -170,7 +191,9 @@ def build_agent_node(
         # ch07 材料段：梗概投影 + 证据 + 任务指令（业务强制令 / 退款订单判定），
         # 合成一条 user 挂当前句之后——不再以 system 注入（防上提合并毁前缀缓存）
         extras: list[str] = []
-        if state.get("intent") in ("物流", "订单", "售后", "其他"):
+        if state.get("intent") in ("物流", "订单", "售后", "其他") or (
+            state.get("intent") == "退款退货" and not evidence and not state.get("order_text")
+        ):
             extras.append(BUSINESS_TURN_PROMPT)
         if state.get("order_text"):
             extras.append(f"用户订单数据：{state['order_text']}")
@@ -186,11 +209,13 @@ def build_agent_node(
         model_input = injected + [HumanMessage(state["query"])]
         if material:
             model_input.append(HumanMessage(material))
-        log_model_ctx(cid, material, injected, state["query"])
+        if not saved:
+            log_model_ctx(cid, material, injected, state["query"])
 
-        def _consume(result) -> tuple[str, list]:
+        def _consume(result, base_len: int | None = None) -> tuple[str, list]:
             msgs = result["messages"]
-            produced = list(msgs[len(model_input):])
+            cut = len(model_input) if base_len is None else base_len
+            produced = list(msgs[cut:])
             text = ""
             for m in reversed(msgs):
                 if isinstance(m, ToolMessage):
@@ -234,78 +259,91 @@ def build_agent_node(
                     Command(resume=decision),
                     saved["thread_id"],
                 )
-                final_text, new_msgs = _consume(result)
+                intr = _first_interrupt(result)
+                if registry is not None and isinstance(intr, dict) and intr.get("type") == "ticket_preview":
+                    bridge = (
+                        saved["agent"],
+                        saved["thread_id"],
+                        intr,
+                        saved.get("input_len", len(model_input)),
+                    )
+                else:
+                    final_text, new_msgs = _consume(result, saved.get("input_len"))
             except GraphInterrupt:
                 raise
             except Exception as e:
                 logger.warning("agent node failed (%s), fallback text", e)
-                paused_agents.pop(cid, None)
                 return {
                     "final_text": _FALLBACK_TEXT,
                     "messages": [],
                     "evidence": evidence,
                 }
-            paused_agents.pop(cid, None)
-            return {
-                "final_text": final_text,
-                "messages": new_msgs,
-                "evidence": evidence,
-            }
+            if bridge is None:
+                return {
+                    "final_text": final_text,
+                    "messages": new_msgs,
+                    "evidence": evidence,
+                }
+        else:
+            try:
+                # ch07：react 子图线程只服务本轮（工具循环内部记忆），跨轮史归主图 State
+                thread_id = str(_uuid.uuid4())
+                if registry is None:
+                    active = react
+                else:
+                    # 恢复路径不进这里：不刷新 MCP，也不新建子图。
+                    if mcp_client is not None:
+                        from app.tools.mcp_client import refresh
 
-        try:
-            # ch07：react 子图线程只服务本轮（工具循环内部记忆），跨轮史归主图 State
-            thread_id = str(_uuid.uuid4())
-            if registry is None:
-                active = react
-            else:
-                # 恢复路径不进这里：不刷新 MCP，也不新建子图。
-                if mcp_client is not None:
-                    from app.tools.mcp_client import refresh
+                        await refresh(registry, mcp_client)
+                    if session_factory is not None and getattr(registry, "session_factory", None) is None:
+                        registry.session_factory = session_factory
+                    from app.tools.spec import ToolContext
+                    from app.tools.wrappers import specs_to_tools
 
-                    await refresh(registry, mcp_client)
-                if session_factory is not None and getattr(registry, "session_factory", None) is None:
-                    registry.session_factory = session_factory
-                from app.tools.spec import ToolContext
-                from app.tools.wrappers import specs_to_tools
+                    specs = []
+                    for name in registry.names():
+                        spec = registry.get(name)
+                        if spec is not None:
+                            specs.append(spec)
 
-                specs = []
-                for name in registry.names():
-                    spec = registry.get(name)
-                    if spec is not None:
-                        specs.append(spec)
+                    def ctx_factory(_cid=cid):
+                        return ToolContext(conversation_id=_cid, tool_call_id=None, confirmed=False)
 
-                def ctx_factory(_cid=cid):
-                    return ToolContext(conversation_id=_cid, tool_call_id=None, confirmed=False)
-
-                active = create_react_agent(
-                    llm,
-                    specs_to_tools(
-                        specs,
-                        ctx_factory,
-                        session_factory=session_factory,
-                        settings=settings,
-                    ),
-                    prompt=AGENT_SYSTEM_PROMPT,
-                    checkpointer=_react_checkpointer,
-                    version="v2",
-                )
-            result = await _invoke(active, {"messages": model_input}, thread_id)
-            intr = _first_interrupt(result)
-            if registry is not None and isinstance(intr, dict) and intr.get("type") == "ticket_preview":
-                bridge = (active, thread_id, intr)
-            else:
-                final_text, new_msgs = _consume(result)
-                # 提取 AIMessage.tool_calls 的产出已由 _ToolFrameHandler 实时推帧，
-                # 这里不再补推（避免与回调帧重复）。
-        except GraphInterrupt:
-            raise
-        except Exception as e:
-            logger.warning("agent node failed (%s), fallback text", e)
-            final_text = _FALLBACK_TEXT
+                    active = create_react_agent(
+                        llm,
+                        specs_to_tools(
+                            specs,
+                            ctx_factory,
+                            session_factory=session_factory,
+                            settings=settings,
+                        ),
+                        prompt=AGENT_SYSTEM_PROMPT,
+                        checkpointer=_react_checkpointer,
+                        version="v2",
+                    )
+                result = await _invoke(active, {"messages": model_input}, thread_id)
+                intr = _first_interrupt(result)
+                if registry is not None and isinstance(intr, dict) and intr.get("type") == "ticket_preview":
+                    bridge = (active, thread_id, intr, len(model_input))
+                else:
+                    final_text, new_msgs = _consume(result)
+                    # 提取 AIMessage.tool_calls 的产出已由 _ToolFrameHandler 实时推帧，
+                    # 这里不再补推（避免与回调帧重复）。
+            except GraphInterrupt:
+                raise
+            except Exception as e:
+                logger.warning("agent node failed (%s), fallback text", e)
+                final_text = _FALLBACK_TEXT
 
         if bridge is not None:
-            active, thread_id, payload = bridge
-            paused_agents[cid] = {"agent": active, "thread_id": thread_id, "payload": payload}
+            active, thread_id, payload, input_len = bridge
+            paused_agents[cid] = {
+                "agent": active,
+                "thread_id": thread_id,
+                "payload": payload,
+                "input_len": input_len,
+            }
             interrupt(payload)  # 父图暂停。GraphInterrupt 必须冒出去，不能被上面的 except 吃掉。
 
         # ch07：本轮 react 新消息回吐主图 State（add_messages 按序并入，随 checkpoint 落盘）

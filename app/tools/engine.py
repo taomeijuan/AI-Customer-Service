@@ -191,13 +191,14 @@ async def _audit(session_factory, spec: ToolSpec, args: dict, ctx: ToolContext, 
 
 
 async def execute(
-    spec: ToolSpec,
+    spec: ToolSpec | None,
     args: dict,
     ctx: ToolContext,
     *,
     session_factory,
     settings,
     deny_message: str = _NEED_CONFIRM,
+    tool_name: str = "",
 ) -> dict:
     """校验 → 写操作确认门 → 调用（只读才重试）→ 格式化 → 审计。返回给模型的 dict。
 
@@ -205,6 +206,29 @@ async def execute(
     用户取消建单时由外壳传入「用户取消了建单」。
     """
     started = time.perf_counter()
+    if spec is None:
+        missing_name = tool_name or "unknown"
+        message = f"工具未注册：{missing_name}"
+        outcome = _Outcome(
+            payload={"ok": False, "error_type": "fault", "error": message},
+            status="失败",
+            error_message=message,
+            result_summary=_summary({"error": message}),
+            retry_count=0,
+        )
+        fallback_spec = ToolSpec(
+            name=missing_name,
+            description="",
+            parameters={},
+            permission="read",
+            source="builtin",
+            mcp_server=None,
+            handler=lambda _a, _c: None,
+        )
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        await _audit(session_factory, fallback_spec, args, ctx, outcome, duration_ms)
+        return outcome.payload
+
     invalid = validate_args(spec.parameters, args)
     if invalid is not None:
         outcome = _Outcome(

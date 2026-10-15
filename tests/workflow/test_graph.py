@@ -244,3 +244,77 @@ async def test_action_question_still_enters_refund_subflow(session_factory, db_s
     out = await graph.ainvoke({"query": "我要退款", "messages": []})
     assert entered["n"] == 1
     assert out["final_text"] == "走子流程了"
+
+
+@pytest.mark.usefixtures("db_session")
+async def test_ticket_and_aftersales_queries_route_to_agent(session_factory, db_session):
+    """M5 回归：建工单、工单追问、查在保/保修、查退货进度应直达 agent，不走 refund_prep/retrieve/comfort。"""
+    from langchain.messages import AIMessage, HumanMessage
+    from app.workflow.graph import wants_refund_process
+
+    assert not wants_refund_process("耳机没声音，帮我建个售后工单")
+    assert not wants_refund_process("订单 1001 还在保吗")
+    assert not wants_refund_process("订单 1001 的退货到哪一步了")
+
+    entered = {"refund": 0}
+
+    async def _prep(state):
+        entered["refund"] += 1
+        return {"final_text": "走子流程了", "evidence": [], "refusal": False}
+
+    retriever = FakeRetriever(RetrievalResult(evidences=[], low_confidence=True))
+    agent = FakeAgent(text="Agent 处理")
+
+    # 1) 售后 + 建工单 → agent
+    g1 = build_workflow(
+        retriever=retriever,
+        agent_node=agent,
+        intent_classifier=FakeClassifier(intent="售后"),
+        session_factory=session_factory,
+        refund_prep=_prep,
+    )
+    out1 = await g1.ainvoke({"query": "耳机没声音，帮我建个售后工单", "messages": []})
+    assert entered["refund"] == 0 and retriever.called_with == []
+    assert out1["final_text"] == "Agent 处理"
+
+    # 2) 投诉 + 明确建工单 → agent（而裸「我要投诉」仍走 comfort）
+    g2 = build_workflow(
+        retriever=retriever,
+        agent_node=agent,
+        intent_classifier=FakeClassifier(intent="投诉"),
+        session_factory=session_factory,
+        refund_prep=_prep,
+    )
+    out2 = await g2.ainvoke({"query": "服务太差了，帮我建个投诉工单", "messages": []})
+    assert out2["final_text"] == "Agent 处理"
+
+    # 3) 上一轮 AI 追问工单详情，本轮用户补答（intent=售后，无「工单」字样）→ agent
+    out3 = await g1.ainvoke(
+        {
+            "query": "耳机没声音，售后类型",
+            "messages": [
+                HumanMessage("帮我建个工单"),
+                AIMessage("请问您遇到了什么具体问题？工单类型是售后、投诉还是咨询？"),
+            ],
+        }
+    )
+    assert entered["refund"] == 0 and retriever.called_with == []
+    assert out3["final_text"] == "Agent 处理"
+
+    # 4) 订单 1001 还在保吗（intent=售后）→ agent，不进 refund_prep
+    out4 = await g1.ainvoke({"query": "订单 1001 还在保吗", "messages": []})
+    assert entered["refund"] == 0 and retriever.called_with == []
+    assert out4["final_text"] == "Agent 处理"
+
+    # 5) 订单 1001 的退货到哪一步了（intent=退款退货）→ agent，不进 refund_prep
+    g5 = build_workflow(
+        retriever=retriever,
+        agent_node=agent,
+        intent_classifier=FakeClassifier(intent="退款退货"),
+        session_factory=session_factory,
+        refund_prep=_prep,
+    )
+    out5 = await g5.ainvoke({"query": "订单 1001 的退货到哪一步了", "messages": []})
+    assert entered["refund"] == 0 and retriever.called_with == []
+    assert out5["final_text"] == "Agent 处理"
+

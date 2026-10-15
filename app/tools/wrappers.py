@@ -56,6 +56,22 @@ def _args_model(spec: ToolSpec) -> type[BaseModel]:
     return create_model(f"{spec.name}_Args", **fields)
 
 
+class _EngineTool(StructuredTool):
+    """透传 dict 入参，把缺必填字段、类型错误、多余字段统一交给 validate_args 与引擎审计。"""
+
+    def _parse_input(
+        self,
+        tool_input: str | dict,
+        tool_call_id: str | None = None,
+    ) -> str | dict:
+        if isinstance(tool_input, dict):
+            result = dict(tool_input)
+            if tool_call_id is not None:
+                result["tool_call_id"] = tool_call_id
+            return result
+        return super()._parse_input(tool_input, tool_call_id=tool_call_id)
+
+
 def _context(ctx_factory, tool_call_id: str | None) -> ToolContext:
     ctx = ctx_factory()
     if tool_call_id:
@@ -66,7 +82,7 @@ def _context(ctx_factory, tool_call_id: str | None) -> ToolContext:
 def _tool(spec: ToolSpec, ctx_factory, *, session_factory, settings) -> StructuredTool:
     async def _run(**kwargs: Any) -> str:
         tool_call_id = kwargs.pop("tool_call_id", None) or None
-        args = {key: value for key, value in kwargs.items() if value is not None}
+        args = dict(kwargs)
         ctx = _context(ctx_factory, tool_call_id)
         if spec.name == "create_ticket":
             if validate_args(spec.parameters, args) is not None:
@@ -101,7 +117,7 @@ def _tool(spec: ToolSpec, ctx_factory, *, session_factory, settings) -> Structur
         )
         return json.dumps(result, ensure_ascii=False)
 
-    return StructuredTool.from_function(
+    return _EngineTool.from_function(
         coroutine=_run,
         name=spec.name,
         description=spec.description or spec.name,

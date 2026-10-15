@@ -107,10 +107,14 @@ async def chat_stream(
     else:
         # ① 有挂起中断=用户放弃了点选 → 静默走完取消分支再处理新消息
         if await _pending_interrupt(request, conversation_id):
+            from app.workflow.agent_node import paused_agents
+
             try:
                 await workflow.ainvoke(Command(resume={"order_no": ""}), config)
             except Exception:
                 logger.exception("abandoned-interrupt cancel failed, cid=%s", conversation_id)
+            finally:
+                paused_agents.pop(conversation_id, None)
 
         # ② 三层上下文装配（DB 是历史真源；锚点/投影随会话行取）
         async with session_factory() as session:

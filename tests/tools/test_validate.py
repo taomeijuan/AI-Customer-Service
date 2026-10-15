@@ -48,6 +48,18 @@ def test_min_length_names_field():
     assert msg == "参数不合法：description 长度不足"
 
 
+def test_max_length_names_field():
+    schema = {
+        "type": "object",
+        "properties": {"description": {"type": "string", "maxLength": 5}},
+        "required": ["description"],
+        "additionalProperties": False,
+    }
+    msg = validate_args(schema, {"description": "超过五个字了"})
+    assert msg == "参数不合法：description 长度超限"
+
+
+
 def test_additional_property_names_field():
     msg = validate_args(
         TICKET_SCHEMA,

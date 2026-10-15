@@ -721,3 +721,106 @@ async def test_complaint_options_persisted_on_log(session_factory, db_session):
             "SELECT options FROM messages WHERE conversation_id=:c AND role='assistant' ORDER BY id DESC LIMIT 1"
         ).bindparams(c=cid))).first()
     assert rows and rows[0] and "转人工" in str(rows[0])
+
+
+async def test_abandoned_ticket_preview_cancelled_and_cleans_paused_agents(session_factory, db_session):
+    """M4 & m3 回归：会话停在 ticket_preview 时用户直接发新消息 → 旧建单取消（记权限拒绝、不建单），
+    paused_agents 清理干净，新消息正常回复不被旧预览劫持。"""
+    from app.core.config import Settings
+    from app.db.models import Ticket, ToolAuditLog
+    from app.tools.registry import ToolRegistry, scan_plugins
+    from app.workflow.agent_node import paused_agents
+
+    paused_agents.clear()
+
+    class _TicketThenChatModel(BaseChatModel):
+        calls: int = 0
+
+        @property
+        def _llm_type(self) -> str:
+            return "ticket-then-chat"
+
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                msg = AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "create_ticket",
+                            "args": {"description": "耳机坏了", "ticket_type": "售后"},
+                            "id": "call-t1",
+                            "type": "tool_call",
+                        }
+                    ],
+                )
+            elif self.calls == 2:
+                msg = AIMessage(content="好的，已为您取消建单")
+            else:
+                msg = AIMessage(content="这是新问题的正常回答")
+            return ChatResult(generations=[ChatGeneration(message=msg)])
+
+    settings = Settings(
+        _env_file=None,
+        max_agent_steps=8,
+        tool_timeout=3.0,
+        tool_retries=1,
+        tool_delay_tools="",
+        tool_delay_seconds=0,
+    )
+    registry = ToolRegistry()
+    registry.session_factory = session_factory
+    scan_plugins(registry)
+    agent = build_agent_node(
+        _TicketThenChatModel(),
+        [],
+        settings,
+        registry=registry,
+        session_factory=session_factory,
+    )
+    app = create_app()
+    app.state.session_factory = session_factory
+    app.state.workflow = build_workflow(
+        retriever=_FakeRetriever(RetrievalResult(evidences=[], low_confidence=False)),
+        agent_node=agent,
+        intent_classifier=_FakeClassifier("订单"),
+        session_factory=session_factory,
+        checkpointer=InMemorySaver(),
+    )
+
+    async with _client(app) as c:
+        r1 = await c.post(
+            "/api/chat/stream",
+            json={"user_id": "u1", "message": "耳机坏了，帮我建个售后工单", "conversation_id": None},
+        )
+        ev1 = sse_events(r1.text)
+        cid = ev1[0][1]["conversation_id"]
+        assert "ticket_preview" in [e for e, _ in ev1]
+        assert cid in paused_agents
+
+        # 用户不点确认/取消，直接发新消息放弃建单
+        r2 = await c.post(
+            "/api/chat/stream",
+            json={"user_id": "u1", "message": "算了先查一下别的", "conversation_id": cid},
+        )
+        ev2 = sse_events(r2.text)
+        kinds2 = [e for e, _ in ev2]
+        assert "ticket_preview" not in kinds2
+        assert cid not in paused_agents
+        text2 = "".join(v["text"] for e, v in ev2 if e == "delta")
+        assert "这是新问题的正常回答" in text2
+
+    async with session_factory() as session:
+        tickets = (await session.execute(select(Ticket))).scalars().all()
+        audits = (
+            await session.execute(
+                select(ToolAuditLog).where(ToolAuditLog.tool_name == "create_ticket")
+            )
+        ).scalars().all()
+    assert len(tickets) == 0
+    assert len(audits) == 1
+    assert audits[0].status == "权限拒绝"
+

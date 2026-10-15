@@ -314,3 +314,108 @@ async def test_empty_description_does_not_interrupt(db_session, session_factory)
     assert await _ticket_count(session_factory) == before
     rows = await _audits(session_factory)
     assert [row.status for row in rows] == ["校验拦下"]
+
+
+@pytest.mark.usefixtures("db_session")
+async def test_missing_required_and_extra_fields_caught_by_engine_validation(db_session, session_factory):
+    """M1 回归：缺必填字段或多余字段不能被 Pydantic 提前拦截/静默剥离，必须进 validate_args 记『校验拦下』。"""
+    cid = await _cid(db_session, "t8-m1-schema")
+    before = await _ticket_count(session_factory)
+    llm = _TicketModel(
+        steps=[
+            ("create_ticket", {"ticket_type": "售后"}),
+            ("create_ticket", {"description": "坏了", "ticket_type": "售后", "extra": 1}),
+            "请补充有效信息",
+        ]
+    )
+    graph = _parent(session_factory, llm)
+    result = await graph.ainvoke(
+        {"query": "帮我建个工单", "conversation_id": cid, "messages": []},
+        config={"configurable": {"thread_id": f"t8-m1-{cid}"}},
+    )
+    assert not (result.get("__interrupt__") if isinstance(result, dict) else getattr(result, "interrupts", None))
+    assert await _ticket_count(session_factory) == before
+    rows = await _audits(session_factory)
+    assert [row.status for row in rows] == ["校验拦下", "校验拦下"]
+    assert "缺少必填字段 description" in (rows[0].error_message or "")
+    assert "不允许多余字段 extra" in (rows[1].error_message or "")
+    tool_msgs = [m for m in result.get("messages", []) if isinstance(m, ToolMessage)]
+    assert len(tool_msgs) == 2
+    assert "参数不合法：缺少必填字段 description" in tool_msgs[0].content
+    assert "参数不合法：不允许多余字段 extra" in tool_msgs[1].content
+
+
+@pytest.mark.usefixtures("db_session")
+async def test_tool_frame_handler_args_ok_and_interrupt_suppression(db_session, session_factory):
+    """M3 回归：
+    1) on_tool_start 从 kwargs['inputs'] 提取真实 args（非空 dict）；
+    2) on_tool_end 根据引擎返回 ok: false 推 ok=False；
+    3) create_ticket 触发 GraphInterrupt 时不推 bogus done(ok=False) 帧。
+    """
+    from app.workflow.agent_node import _ToolFrameHandler
+    from langgraph.errors import GraphInterrupt
+
+    emitted: list[dict] = []
+    handler = _ToolFrameHandler(lambda frame: emitted.append(frame))
+
+    # 1) kwargs["inputs"] 含 dict，input_str 是 Python 单引号 repr
+    await handler.on_tool_start(
+        {"name": "query_order"},
+        "{'order_no': '1001', 'tool_call_id': 'c1'}",
+        inputs={"order_no": "1001", "tool_call_id": "c1"},
+    )
+    assert emitted[-1] == {
+        "tool": {"tool": "query_order", "args": {"order_no": "1001"}, "status": "running", "ok": True}
+    }
+
+    # 2) 引擎返回 {"ok": false, ...} 时 done 帧 ok 应为 False
+    await handler.on_tool_end(
+        ToolMessage(content='{"ok": false, "error_type": "not_found", "error": "没有查到对应记录"}', tool_call_id="c1")
+    )
+    assert emitted[-1] == {
+        "tool": {"tool": "query_order", "args": {"order_no": "1001"}, "status": "done", "ok": False}
+    }
+
+    # 3) GraphInterrupt 触发 on_tool_error 时静默弹栈，不发失败 done 帧
+    await handler.on_tool_start(
+        {"name": "create_ticket"},
+        "{'description': '耳机坏了', 'ticket_type': '售后'}",
+        inputs={"description": "耳机坏了", "ticket_type": "售后", "tool_call_id": "c2"},
+    )
+    count_before = len(emitted)
+    await handler.on_tool_error(GraphInterrupt())
+    assert len(emitted) == count_before
+    assert handler._stack == []
+
+
+@pytest.mark.usefixtures("db_session")
+async def test_paused_agents_popped_immediately_on_resume_even_if_cancelled(db_session, session_factory):
+    """M4 回归：resume 唤醒后立即从 paused_agents 移除 cid；即便后续子图抛出 CancelledError 也不会残留。"""
+    import asyncio
+
+    cid = await _cid(db_session, "t8-m4-leak")
+    llm = _TicketModel(
+        steps=[
+            ("create_ticket", {"description": "耳机没声音", "ticket_type": "售后"}),
+            "已创建",
+        ]
+    )
+    graph = _parent(session_factory, llm)
+    config = {"configurable": {"thread_id": f"t8-m4-{cid}"}}
+    await graph.ainvoke(
+        {"query": "耳机没声音，帮我建个售后工单", "conversation_id": cid, "messages": []},
+        config=config,
+    )
+    assert cid in paused_agents
+
+    class _CancelledAgent:
+        async def ainvoke(self, *args, **kwargs):
+            raise asyncio.CancelledError("client disconnected")
+
+    paused_agents[cid]["agent"] = _CancelledAgent()
+    with pytest.raises(BaseException):
+        await graph.ainvoke(Command(resume={"action": "confirm"}), config=config)
+
+    assert cid not in paused_agents
+
+
