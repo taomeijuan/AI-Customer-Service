@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     tool_retries: int = 1
     tool_delay_tools: str = ""
     tool_delay_seconds: float = 0
+    mcp_logistics_url: str = "http://127.0.0.1:8765/mcp"
+    mcp_aftersales_url: str = "http://127.0.0.1:8766/mcp"
 
     ollama_embed_base_url: str = "http://localhost:11434/v1"
     embed_model: str = "bge-m3"
