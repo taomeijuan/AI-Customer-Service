@@ -44,6 +44,15 @@ def tool_answer_to_text(name: str, raw: str) -> str:
             f"{data.get('product', '')}：价格 {data.get('price', '')} 元，"
             f"库存 {data.get('stock', '')}，促销：{data.get('promo', '')}"
         )
+    if name == "query_warranty":
+        body = data["data"] if isinstance(data.get("data"), dict) else data
+        return (
+            f"订单 {body.get('order_no', '')}：商品 {body.get('product', '')}，"
+            f"保修「{body.get('warranty_status', '')}」，保修至 {body.get('warranty_until', '')}"
+        )
+    if name == "query_return":
+        body = data["data"] if isinstance(data.get("data"), dict) else data
+        return f"订单 {body.get('order_no', '')}：退货进度「{body.get('return_status', '')}」"
     parts = []
     for k, v in data.items():
         if isinstance(v, (list, dict)):

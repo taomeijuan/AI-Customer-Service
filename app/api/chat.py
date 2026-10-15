@@ -240,6 +240,14 @@ async def chat_stream(
                                 "order_selector",
                                 {"orders": value.get("orders", []), "question": value.get("question", "")},
                             )
+                        if isinstance(value, dict) and value.get("type") == "ticket_preview":
+                            yield emit(
+                                "ticket_preview",
+                                {
+                                    "ticket_type": value.get("ticket_type", ""),
+                                    "description": value.get("description", ""),
+                                },
+                            )
                     for node_name, update in data.items():
                         if node_name == "__interrupt__":
                             continue

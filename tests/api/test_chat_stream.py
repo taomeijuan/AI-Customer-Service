@@ -443,6 +443,55 @@ async def test_order_selector_interrupt_and_resume(session_factory, db_session):
         assert "".join(deltas2) == "订单 1001 可以退 [1]"
 
 
+async def test_ticket_preview_interrupt_and_resume(session_factory, db_session):
+    """T8：建工单中断发 ticket_preview；确认走现有 resume 字段，不新开 URL。"""
+    from langgraph.types import interrupt as _interrupt
+
+    def _agent(state):
+        decision = _interrupt(
+            {
+                "type": "ticket_preview",
+                "ticket_type": "售后",
+                "description": "耳机没声音",
+                "ticket_no": "should-not-leak",
+            }
+        )
+        if isinstance(decision, dict) and decision.get("action") == "confirm":
+            return {"final_text": "工单已创建", "messages": [], "evidence": []}
+        return {"final_text": "已取消建单", "messages": [], "evidence": []}
+
+    app = create_app()
+    app.state.session_factory = session_factory
+    app.state.workflow = build_workflow(
+        retriever=_FakeRetriever(RetrievalResult(evidences=[], low_confidence=False)),
+        agent_node=_agent,
+        intent_classifier=_FakeClassifier("订单"),
+        session_factory=session_factory,
+        checkpointer=InMemorySaver(),
+    )
+    async with _client(app) as c:
+        r1 = await c.post(
+            "/api/chat/stream",
+            json={"user_id": "u1", "message": "耳机没声音，帮我建个售后工单", "conversation_id": None},
+        )
+        ev1 = sse_events(r1.text)
+        kinds1 = [e for e, _ in ev1]
+        assert "ticket_preview" in kinds1
+        preview = [v for e, v in ev1 if e == "ticket_preview"][0]
+        assert preview == {"ticket_type": "售后", "description": "耳机没声音"}
+        assert kinds1[-1] == "done"
+        cid = ev1[0][1]["conversation_id"]
+
+        r2 = await c.post(
+            "/api/chat/stream",
+            json={"user_id": "u1", "resume": {"action": "confirm"}, "conversation_id": cid},
+        )
+        ev2 = sse_events(r2.text)
+        kinds2 = [e for e, _ in ev2]
+        assert "ticket_preview" not in kinds2
+        assert "".join(v["text"] for e, v in ev2 if e == "delta") == "工单已创建"
+
+
 async def test_resume_options_frame_carries_order(session_factory, db_session):
     """评审 M1 回归：refund_prep 的 options 更新必须发 options 帧（含订单摘要）。"""
     from langgraph.checkpoint.memory import InMemorySaver as _Saver

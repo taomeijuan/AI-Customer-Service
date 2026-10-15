@@ -190,8 +190,20 @@ async def _audit(session_factory, spec: ToolSpec, args: dict, ctx: ToolContext, 
         logger.exception("工具审计写入失败 tool=%s", spec.name)
 
 
-async def execute(spec: ToolSpec, args: dict, ctx: ToolContext, *, session_factory, settings) -> dict:
-    """校验 → 写操作确认门 → 调用（只读才重试）→ 格式化 → 审计。返回给模型的 dict。"""
+async def execute(
+    spec: ToolSpec,
+    args: dict,
+    ctx: ToolContext,
+    *,
+    session_factory,
+    settings,
+    deny_message: str = _NEED_CONFIRM,
+) -> dict:
+    """校验 → 写操作确认门 → 调用（只读才重试）→ 格式化 → 审计。返回给模型的 dict。
+
+    deny_message 只用于未确认的写操作。默认「写操作需要用户确认」；
+    用户取消建单时由外壳传入「用户取消了建单」。
+    """
     started = time.perf_counter()
     invalid = validate_args(spec.parameters, args)
     if invalid is not None:
@@ -204,10 +216,10 @@ async def execute(spec: ToolSpec, args: dict, ctx: ToolContext, *, session_facto
         )
     elif spec.permission == "write" and not ctx.confirmed:
         outcome = _Outcome(
-            payload={"ok": False, "error_type": "fault", "error": _NEED_CONFIRM},
+            payload={"ok": False, "error_type": "fault", "error": deny_message},
             status="权限拒绝",
-            error_message=_NEED_CONFIRM,
-            result_summary=_summary({"error": _NEED_CONFIRM}),
+            error_message=deny_message,
+            result_summary=_summary({"error": deny_message}),
             retry_count=0,
         )
     else:

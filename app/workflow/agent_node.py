@@ -9,9 +9,11 @@ from typing import Any
 
 from langchain.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.callbacks import AsyncCallbackHandler
-from langgraph.config import get_stream_writer
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.config import get_stream_writer
+from langgraph.errors import GraphInterrupt
 from langgraph.prebuilt import create_react_agent
+from langgraph.types import Command, interrupt
 
 from app.workflow.text import (
     CITE_RE as _CITE_RE,
@@ -83,19 +85,48 @@ AGENT_SYSTEM_PROMPT = """你是"商城小助手"，一家电商平台的智能�
 6. 绝不承诺知识条目和工具结果以外的到账时间、价格、库存、赔偿金额。
 7. 与电商无关的问题，礼貌说明并引导回购物话题。"""
 
+# 子图中断要靠同一个 checkpointer 恢复。每轮新建 saver 会把挂起状态丢掉。
+_react_checkpointer = InMemorySaver()
+paused_agents: dict[Any, dict] = {}
+
+_FALLBACK_TEXT = "这个问题我这边处理时遇到了一点困难，帮您转人工确认会更稳妥"
+
+
+def _first_interrupt(result) -> dict | None:
+    """探针实证：ainvoke 返回 dict，载荷在 result["__interrupt__"][0].value。
+
+    同时兼容 GraphOutput.interrupts。
+    """
+    bag = None
+    if isinstance(result, dict):
+        bag = result.get("__interrupt__")
+    if not bag:
+        bag = getattr(result, "interrupts", None)
+    if not bag:
+        return None
+    value = getattr(bag[0], "value", None)
+    return value if isinstance(value, dict) else None
+
 
 def build_agent_node(
     llm: Any,
     tools: list,
     settings: Any,
     checkpointer: Any | None = None,
+    registry: Any | None = None,
+    mcp_client: Any | None = None,
+    session_factory: Any | None = None,
 ):
-    react = create_react_agent(
-        llm,
-        tools,
-        prompt=AGENT_SYSTEM_PROMPT,
-        checkpointer=checkpointer or InMemorySaver(),
-    )
+    # registry 为空时保持旧接线：用调用方传入的工具列表，子图在建节点时编一次。
+    react = None
+    if registry is None:
+        react = create_react_agent(
+            llm,
+            tools,
+            prompt=AGENT_SYSTEM_PROMPT,
+            checkpointer=checkpointer or InMemorySaver(),
+            version="v2",
+        )
 
     async def agent_node(state: dict) -> dict:
         import uuid as _uuid
@@ -105,14 +136,15 @@ def build_agent_node(
 
         from app.memory.context_builder import compose_material, log_model_ctx
 
+        cid = state.get("conversation_id")
+        # 恢复路径的第一件事：把父图 resume 值取回来。这一下不能包在 except Exception 里。
+        saved = paused_agents.get(cid) if registry is not None else None
+        decision = interrupt(saved["payload"]) if saved else None
+
         try:
             writer = get_stream_writer()
         except Exception:
             writer = lambda data: None
-
-        cid = state.get("conversation_id")
-        # ch07：react 子图线程只服务本轮（工具循环内部记忆），跨轮史归主图 State
-        thread_id = str(_uuid.uuid4())
 
         # ch07 装配：精简史来自 api 层 ctx_history（直调兼容 messages）；剥陈旧 [n]
         src = state.get("ctx_history")
@@ -155,30 +187,18 @@ def build_agent_node(
             model_input.append(HumanMessage(material))
         log_model_ctx(cid, material, injected, state["query"])
 
-        new_msgs: list = []
-        try:
-            result = await react.ainvoke(
-                {"messages": model_input},
-                config={
-                    "configurable": {"thread_id": thread_id},
-                    "recursion_limit": settings.max_agent_steps,
-                    "callbacks": [_ToolFrameHandler(writer)],
-                },
-            )
+        def _consume(result) -> tuple[str, list]:
             msgs = result["messages"]
-            new_msgs = list(msgs[len(model_input):])
-
-            # 提取最终回答（最后一条有内容的 AIMessage）
-            final_text = ""
+            produced = list(msgs[len(model_input):])
+            text = ""
             for m in reversed(msgs):
                 if isinstance(m, ToolMessage):
                     continue
                 if hasattr(m, "tool_calls") and m.tool_calls:
                     continue  # 跳过工具申请消息
                 if hasattr(m, "content") and m.content:
-                    final_text = m.content
+                    text = m.content
                     break
-
             # 提取 ToolMessage → 作为 evidence 条目（可点击引用）+ tool 帧
             n = len(evidence)  # 知识类证据编号延续
             for m in msgs:
@@ -191,13 +211,101 @@ def build_agent_node(
                         "question": state["query"],
                         "answer": _tool_answer_to_text(m.name or "tool", m.content),
                     })
+            return text, produced
 
-            # 提取 AIMessage.tool_calls 的产出已由 _ToolFrameHandler 实时推帧，
-            # 这里不再补推（避免与回调帧重复）。
+        async def _invoke(agent, payload, tid):
+            return await agent.ainvoke(
+                payload,
+                config={
+                    "configurable": {"thread_id": tid},
+                    "recursion_limit": settings.max_agent_steps,
+                    "callbacks": [_ToolFrameHandler(writer)],
+                },
+            )
 
+        new_msgs: list = []
+        final_text = ""
+        bridge: tuple | None = None
+        if saved:
+            try:
+                result = await _invoke(
+                    saved["agent"],
+                    Command(resume=decision),
+                    saved["thread_id"],
+                )
+                final_text, new_msgs = _consume(result)
+            except GraphInterrupt:
+                raise
+            except Exception as e:
+                logger.warning("agent node failed (%s), fallback text", e)
+                paused_agents.pop(cid, None)
+                return {
+                    "final_text": _FALLBACK_TEXT,
+                    "messages": [],
+                    "evidence": evidence,
+                }
+            paused_agents.pop(cid, None)
+            return {
+                "final_text": final_text,
+                "messages": new_msgs,
+                "evidence": evidence,
+            }
+
+        try:
+            # ch07：react 子图线程只服务本轮（工具循环内部记忆），跨轮史归主图 State
+            thread_id = str(_uuid.uuid4())
+            if registry is None:
+                active = react
+            else:
+                # 恢复路径不进这里：不刷新 MCP，也不新建子图。
+                if mcp_client is not None:
+                    from app.tools.mcp_client import refresh
+
+                    await refresh(registry, mcp_client)
+                if session_factory is not None and getattr(registry, "session_factory", None) is None:
+                    registry.session_factory = session_factory
+                from app.tools.spec import ToolContext
+                from app.tools.wrappers import specs_to_tools
+
+                specs = []
+                for name in registry.names():
+                    spec = registry.get(name)
+                    if spec is not None:
+                        specs.append(spec)
+
+                def ctx_factory(_cid=cid):
+                    return ToolContext(conversation_id=_cid, tool_call_id=None, confirmed=False)
+
+                active = create_react_agent(
+                    llm,
+                    specs_to_tools(
+                        specs,
+                        ctx_factory,
+                        session_factory=session_factory,
+                        settings=settings,
+                    ),
+                    prompt=AGENT_SYSTEM_PROMPT,
+                    checkpointer=_react_checkpointer,
+                    version="v2",
+                )
+            result = await _invoke(active, {"messages": model_input}, thread_id)
+            intr = _first_interrupt(result)
+            if registry is not None and isinstance(intr, dict) and intr.get("type") == "ticket_preview":
+                bridge = (active, thread_id, intr)
+            else:
+                final_text, new_msgs = _consume(result)
+                # 提取 AIMessage.tool_calls 的产出已由 _ToolFrameHandler 实时推帧，
+                # 这里不再补推（避免与回调帧重复）。
+        except GraphInterrupt:
+            raise
         except Exception as e:
             logger.warning("agent node failed (%s), fallback text", e)
-            final_text = "这个问题我这边处理时遇到了一点困难，帮您转人工确认会更稳妥"
+            final_text = _FALLBACK_TEXT
+
+        if bridge is not None:
+            active, thread_id, payload = bridge
+            paused_agents[cid] = {"agent": active, "thread_id": thread_id, "payload": payload}
+            interrupt(payload)  # 父图暂停。GraphInterrupt 必须冒出去，不能被上面的 except 吃掉。
 
         # ch07：本轮 react 新消息回吐主图 State（add_messages 按序并入，随 checkpoint 落盘）
         return {
