@@ -9,6 +9,7 @@ from app.tools.spec import ToolSpec
 class ToolRegistry:
     def __init__(self) -> None:
         self._specs: dict[str, ToolSpec] = {}
+        self.session_factory = None
 
     def register(self, spec: ToolSpec) -> None:
         self._specs[spec.name] = spec

@@ -1,4 +1,4 @@
-"""T4：插件扫描只登记订单/商品；物流假数据种子与旧工具一致。"""
+"""T4：插件扫描登记订单/商品，不登记物流；物流假数据种子与旧工具一致。"""
 
 import inspect
 
@@ -27,7 +27,7 @@ def test_scan_registers_order_and_product_not_logistics():
     registry = ToolRegistry()
     scan_plugins(registry)
     names = set(registry.names())
-    assert names == {"query_order", "query_product"}
+    assert names == {"query_order", "query_product", "create_ticket"}
     assert "query_logistics" not in names
 
     order = registry.get("query_order")
@@ -71,7 +71,7 @@ def test_in_test_register_shows_up_without_editing_engine():
     )
     assert "ping_probe" in registry.names()
     assert registry.get("ping_probe").name == "ping_probe"
-    assert before == {"query_order", "query_product"}
+    assert before == {"query_order", "query_product", "create_ticket"}
 
 
 async def _call(handler, *args, **kwargs):
