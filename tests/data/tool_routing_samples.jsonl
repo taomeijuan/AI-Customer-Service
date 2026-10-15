@@ -4,3 +4,7 @@
 {"text": "耳机右边没声音，客服也解决不了，给我转人工建个工单吧", "expected_tool": "create_ticket"}
 {"text": "在吗", "expected_tool": null}
 {"text": "订单 1003 买的什么东西", "expected_tool": "query_order"}
+{"text": "帮我建个工单", "expected_tool": null}
+{"text": "耳机没声音，帮我建个售后工单", "expected_tool": "create_ticket"}
+{"text": "订单 1001 还在保吗", "expected_tool": "query_warranty"}
+{"text": "订单 1001 的退货到哪一步了", "expected_tool": "query_return"}

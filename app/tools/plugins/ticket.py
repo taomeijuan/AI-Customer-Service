@@ -3,7 +3,16 @@
 from app.repositories.tickets import TicketsRepo
 from app.tools.spec import ToolContext, ToolSpec
 
-_DESCRIPTION = "创建人工客服工单。用户明确要求建工单或转人工，且已说明问题与工单类型时调用。"
+_DESCRIPTION = (
+    "创建人工客服工单。"
+    "只有用户明确要求建工单或转人工时才可以调用。"
+    "description 必须来自用户原话；用户没有给出问题描述时不要调用，先追问，禁止编造描述后再调用。"
+    "ticket_type 只能是用户明确说过的售后、投诉或咨询；用户没说工单类型就不要调用，不要猜测。"
+    "问题描述和工单类型都已经出现在用户原话里时，必须调用本工具，不要只回复文字，也不要再追问订单号。"
+    "例如「耳机没声音，帮我建个售后工单」要调用，description 用用户说的问题，ticket_type 填售后。"
+    "例如用户只说「帮我建个工单」、没有问题和类型时，不要调用。"
+    "用户只是表达不满、没有明确要求建单或转人工时，不要调用，先安抚。"
+)
 
 _PARAMETERS = {
     "type": "object",

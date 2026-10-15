@@ -23,6 +23,12 @@ def test_system_prompt_has_constraints():
     # 行为约束关键词在文案里（防文案回退）；文案本身按工作要求走人工核对
     # ①「对话记忆可用」与「实时数据查不到」分开表述（ch01 验收2 根因修复）
     # ②「政策费用类必须先查知识库」（ch02 验收3 漏召回演示的前提）
-    # ③「明确建单才调 create_ticket」（投诉先安抚的产品决策）
+    # ③ 缺信息先追问：描述必须来自用户原话，类型没说先问，不满先安抚
     for kw in ("直接引用", "查不到", "query_faq", "create_ticket", "电商"):
         assert kw in SYSTEM_PROMPT
+    assert "用户原话" in SYSTEM_PROMPT
+    assert "售后/投诉/咨询" in SYSTEM_PROMPT
+    assert "不要编造" in SYSTEM_PROMPT
+    assert "不要猜测" in SYSTEM_PROMPT
+    assert "先安抚" in SYSTEM_PROMPT
+    assert "立刻" not in SYSTEM_PROMPT
