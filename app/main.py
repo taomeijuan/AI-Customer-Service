@@ -49,8 +49,8 @@ from app.workflow.graph import build_workflow
 from app.workflow.intent import LangChainIntentClassifier
 from app.workflow.refund_flow import build_refund_prep
 from app.workflow.resolver import ResolutionSchema, Resolver
-from app.tools.ecommerce import query_logistics, query_order, query_product
-from app.tools.ticket import build_create_ticket_tool
+from app.tools.mcp_client import build_mcp_client
+from app.tools.registry import ToolRegistry, scan_plugins
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -106,10 +106,20 @@ def create_app() -> FastAPI:
     app.state.retriever = retriever
     app.state.answerer = Answerer(build_structured_model(model, AnswerSchema))
 
+    # 内置工具走插件扫描。物流不在内置表里，由 MCP 在每轮对话时现拉；这里不连 Server。
+    registry = ToolRegistry()
+    scan_plugins(registry)
+    registry.session_factory = app.state.session_factory
+    app.state.tool_registry = registry
+    mcp_client = build_mcp_client(settings)
+
     agent_node = build_agent_node(
         llm=model,
-        tools=[query_order, query_product, query_logistics],  # ch02 业务工具；知识类由图检索节点承担
+        tools=[],
         settings=settings,
+        registry=registry,
+        mcp_client=mcp_client,
+        session_factory=app.state.session_factory,
     )
     refund_prep = build_refund_prep(
         retriever=retriever,
