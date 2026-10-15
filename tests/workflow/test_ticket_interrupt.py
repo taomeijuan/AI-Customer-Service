@@ -387,6 +387,25 @@ async def test_tool_frame_handler_args_ok_and_interrupt_suppression(db_session, 
     assert len(emitted) == count_before
     assert handler._stack == []
 
+    # 4) MCP 适配器工具在 _EngineTool 内部嵌套 ainvoke 时，不重复发 running/done 帧
+    await handler.on_tool_start(
+        {"name": "query_logistics"},
+        "{'order_no': '1001'}",
+        inputs={"order_no": "1001", "tool_call_id": "c3"},
+    )
+    assert len(emitted) == count_before + 1
+    await handler.on_tool_start(
+        {"name": "query_logistics"},
+        "{'order_no': '1001'}",
+        inputs={"order_no": "1001"},
+    )
+    assert len(emitted) == count_before + 1  # 内层工具 start 不重发
+    await handler.on_tool_end([{"type": "text", "text": '{"order_no": "1001"}'}])
+    assert len(emitted) == count_before + 1  # 内层工具 end 不重发
+    await handler.on_tool_end(ToolMessage(content='{"ok": true, "data": {"order_no": "1001"}}', tool_call_id="c3"))
+    assert len(emitted) == count_before + 2
+    assert emitted[-1]["tool"]["status"] == "done" and emitted[-1]["tool"]["ok"] is True
+
 
 @pytest.mark.usefixtures("db_session")
 async def test_paused_agents_popped_immediately_on_resume_even_if_cancelled(db_session, session_factory):

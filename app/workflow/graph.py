@@ -173,9 +173,13 @@ def build_workflow(
             value, confidence = FALLBACK_INTENT, 0.0
         # ch07.1（用户拍板：不让模型猜）：办理标志由代码规则对**用户原话**判定；
         # 消解器确认在追问具体订单（槽位非空）也算发起（ch06 问句直通语义）
-        action = value in ("退款退货", "售后") and (
-            wants_refund_process(state.get("raw_query") or state["query"])
-            or bool((state.get("ctx_order_no") or "").strip())
+        action = (
+            value in ("退款退货", "售后")
+            and not _is_direct_agent_turn(state)
+            and (
+                wants_refund_process(state.get("raw_query") or state["query"])
+                or bool((state.get("ctx_order_no") or "").strip())
+            )
         )
         logger.info("intent=%s confidence=%.2f action=%s query=%s", value, confidence, action, state["query"])
         if confidence < INTENT_LOW_CONF_THRESHOLD and session_factory is not None and state.get("conversation_id"):

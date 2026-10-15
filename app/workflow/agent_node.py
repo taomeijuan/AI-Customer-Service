@@ -61,11 +61,15 @@ class _ToolFrameHandler(AsyncCallbackHandler):
                     args = parsed
             except Exception:
                 pass
+        is_outer = not self._stack
         self._stack.append({"name": name, "args": args})
-        self._writer({"tool": {"tool": name, "args": args, "status": "running", "ok": True}})
+        if is_outer:
+            self._writer({"tool": {"tool": name, "args": args, "status": "running", "ok": True}})
 
     async def on_tool_end(self, output, **kwargs) -> None:
         meta = self._stack.pop() if self._stack else {"name": "tool", "args": {}}
+        if self._stack:
+            return  # 内层嵌套工具（如 MCP 适配器的 tool.ainvoke）结束时不重发帧
         content = getattr(output, "content", output)
         ok = True
         if isinstance(content, str) and content.startswith("{"):
@@ -83,6 +87,8 @@ class _ToolFrameHandler(AsyncCallbackHandler):
                 self._stack.pop()
             return
         meta = self._stack.pop() if self._stack else {"name": "tool", "args": {}}
+        if self._stack:
+            return  # 内层工具异常（如重试中的第一次失败）由外层引擎统一结算
         self._writer({"tool": {"tool": meta["name"], "args": meta["args"], "status": "done", "ok": False}})
 
 AGENT_SYSTEM_PROMPT = """你是"商城小助手"，一家电商平台的智能客服，可以调用工具查询实时数据。
