@@ -1,7 +1,9 @@
 """T6 探针：子进程里的两个 FastMCP Server，经 MultiServerMCPClient 现拉工具。"""
 
 import json
+import os
 import re
+import signal
 import socket
 import subprocess
 import threading
@@ -15,6 +17,10 @@ from app.tools.mock_data import order_data
 
 ROOT = Path(__file__).resolve().parents[2]
 HOST = "127.0.0.1"
+_SERVER_SCRIPTS = (
+    "mcp_servers/logistics_server.py",
+    "mcp_servers/aftersales_server.py",
+)
 
 
 def _start(script: str) -> tuple[subprocess.Popen[str], list[str]]:
@@ -24,6 +30,7 @@ def _start(script: str) -> tuple[subprocess.Popen[str], list[str]]:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        start_new_session=True,
     )
     lines: list[str] = []
 
@@ -50,8 +57,6 @@ def _wait_tcp(proc: subprocess.Popen[str], stderr: list[str], port: int, timeout
                 return
         except OSError:
             time.sleep(0.1)
-    proc.kill()
-    time.sleep(0.2)
     raise AssertionError(
         f"{HOST}:{port} did not accept TCP within {timeout}s\n" + "".join(stderr)
     )
@@ -64,10 +69,126 @@ def script_of(proc: subprocess.Popen[str]) -> str:
     return str(args)
 
 
-def _stop(proc: subprocess.Popen[str]) -> None:
-    if proc.poll() is None:
-        proc.kill()
-    proc.wait(timeout=5)
+def _listener_pids(port: int) -> list[int]:
+    result = subprocess.run(
+        ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fp"],
+        capture_output=True,
+        text=True,
+    )
+    pids: list[int] = []
+    for line in result.stdout.splitlines():
+        if line.startswith("p") and line[1:].isdigit():
+            pid = int(line[1:])
+            if pid not in pids:
+                pids.append(pid)
+    return pids
+
+
+def _cmdline(pid: int) -> str:
+    result = subprocess.run(
+        ["ps", "-ww", "-p", str(pid), "-o", "args="],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def _is_our_mcp_server(cmdline: str) -> bool:
+    return "python" in cmdline and any(script in cmdline for script in _SERVER_SCRIPTS)
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _kill_pid(pid: int) -> None:
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    if _wait_until(lambda: not _pid_alive(pid), timeout=5):
+        return
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    _wait_until(lambda: not _pid_alive(pid), timeout=5)
+
+
+def _reap_leftover_servers() -> None:
+    """上次探针若只杀掉 uv，Python 子进程还会占着 8765/8766。只清这两个脚本。"""
+    for port in (8765, 8766):
+        killed = False
+        for pid in _listener_pids(port):
+            if not _is_our_mcp_server(_cmdline(pid)):
+                continue
+            _kill_pid(pid)
+            killed = True
+        if killed:
+            _wait_port_free(port)
+
+
+def _group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _signal_group(pgid: int, sig: int) -> None:
+    try:
+        os.killpg(pgid, sig)
+    except ProcessLookupError:
+        pass
+
+
+def _wait_until(done, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if done():
+            return True
+        time.sleep(0.05)
+    return bool(done())
+
+
+def _wait_port_free(port: int, timeout: float = 5) -> None:
+    _wait_until(lambda: not _listener_pids(port), timeout)
+
+
+def _wait_group_dead(proc: subprocess.Popen[str], timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    pgid = proc.pid
+    while time.monotonic() < deadline:
+        proc.poll()
+        if not _group_alive(pgid):
+            return True
+        time.sleep(0.05)
+    proc.poll()
+    return not _group_alive(pgid)
+
+
+def _stop(proc: subprocess.Popen[str] | None, port: int | None = None) -> None:
+    # uv 不 exec 成 Python，也不转发 SIGKILL。只杀 uv 会留下占端口的子进程，所以杀整个进程组。
+    if proc is None:
+        return
+    pgid = proc.pid
+    _signal_group(pgid, signal.SIGTERM)
+    if not _wait_group_dead(proc, timeout=5):
+        _signal_group(pgid, signal.SIGKILL)
+        _wait_group_dead(proc, timeout=5)
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+    if port is not None:
+        _wait_port_free(port)
 
 
 def _payload(result: object) -> dict:
@@ -80,9 +201,12 @@ def _payload(result: object) -> dict:
 
 
 async def test_mcp_probe_lists_tools_and_stable_results():
-    logistics_proc, logistics_err = _start("mcp_servers/logistics_server.py")
-    aftersales_proc, aftersales_err = _start("mcp_servers/aftersales_server.py")
+    _reap_leftover_servers()
+    logistics_proc: subprocess.Popen[str] | None = None
+    aftersales_proc: subprocess.Popen[str] | None = None
     try:
+        logistics_proc, logistics_err = _start("mcp_servers/logistics_server.py")
+        aftersales_proc, aftersales_err = _start("mcp_servers/aftersales_server.py")
         _wait_tcp(logistics_proc, logistics_err, 8765)
         _wait_tcp(aftersales_proc, aftersales_err, 8766)
 
@@ -126,5 +250,5 @@ async def test_mcp_probe_lists_tools_and_stable_results():
         assert returned["order_no"] == "1001"
         assert returned["return_status"] in {"APPLIED", "IN_TRANSIT", "REFUNDED", "NONE"}
     finally:
-        _stop(logistics_proc)
-        _stop(aftersales_proc)
+        _stop(logistics_proc, 8765)
+        _stop(aftersales_proc, 8766)
